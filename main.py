@@ -48,14 +48,6 @@ def symmetry_piece_reachable(max_dist, cond):
 
     return fn
 
-
-king_reachable = symmetry_piece_reachable(1, [1, 2])
-queen_reachable = symmetry_piece_reachable(8, [1, 2])
-rook_reachable = symmetry_piece_reachable(8, [1])
-bishop_reachable = symmetry_piece_reachable(8, [2])
-knight_reachable = symmetry_piece_reachable(1, [5])
-
-
 def pawn_reachable(i, j, piece_color):
     result = []
 
@@ -79,28 +71,36 @@ def pawn_reachable(i, j, piece_color):
     return result
 
 class Piece:
-    def __init__(self, char, point, reachable):
+    def __init__(self, char, point, reachable, id):
         self.char = char
         self.point = point
         self.reachable = reachable
+        self.id = id
+        self.moved = False
 
     def color(self):
         return self.char.isupper()
+
+king_reachable = symmetry_piece_reachable(1, [1, 2])
+queen_reachable = symmetry_piece_reachable(8, [1, 2])
+rook_reachable = symmetry_piece_reachable(8, [1])
+bishop_reachable = symmetry_piece_reachable(8, [2])
+knight_reachable = symmetry_piece_reachable(1, [5])
     
 id_to_piece = {
-    -6: Piece("k", float("inf"), king_reachable),
-    -5: Piece("q", 9.0, queen_reachable),
-    -4: Piece("r", 5.0, rook_reachable),
-    -3: Piece("b", 3.0, bishop_reachable),
-    -2: Piece("n", 3.0, knight_reachable),
-    -1: Piece("p", 1.0, pawn_reachable),
+    -6: Piece("k", float("inf"), king_reachable, -6),
+    -5: Piece("q", 9.0, queen_reachable, -5),
+    -4: Piece("r", 5.0, rook_reachable, -4),
+    -3: Piece("b", 3.0, bishop_reachable, -3),
+    -2: Piece("n", 3.0, knight_reachable, -2),
+    -1: Piece("p", 1.0, pawn_reachable, -1),
     0:  None,
-    +1: Piece("p", 1.0, pawn_reachable),
-    +2: Piece("n", 3.0, knight_reachable),
-    +3: Piece("b", 3.0, bishop_reachable),
-    +4: Piece("r", 5.0, rook_reachable),
-    +5: Piece("q", 9.0, queen_reachable),
-    +6: Piece("k", float("inf"), king_reachable),
+    +1: Piece("P", 1.0, pawn_reachable, +1),
+    +2: Piece("N", 3.0, knight_reachable, +2),
+    +3: Piece("B", 3.0, bishop_reachable, +3),
+    +4: Piece("R", 5.0, rook_reachable, +4),
+    +5: Piece("Q", 9.0, queen_reachable, +5),
+    +6: Piece("K", float("inf"), king_reachable, +6),
 }
 
 def render():
@@ -119,22 +119,27 @@ def render():
 is_white_turn = True
 
 
-def select():
-
+def ask_place():
     file = input("file (a~h): ")
 
     if not (len(file) == 1 and ord("a") <= ord(file) <= ord("h")):
-        print("Error! File must be a letter between a and h.")
+        print("File must be a letter between a and h.")
         return False
 
     rank = input("rank (1~8): ")
 
     if not (rank.isdigit() and 1 <= int(rank) <= 8):
-        print("Error! Rank must be an integer between 1 and 8.")
+        print("Rank must be an integer between 1 and 8.")
         return False
 
     i = 8 - int(rank)
     j = ord(file) - ord("a")
+
+    return (i, j)
+
+def select():
+
+    (i, j) = ask_place()
 
     selected_piece = id_to_piece[board[i][j]]
 
@@ -148,9 +153,18 @@ def select():
         print("The piece you choice is not yours!!")
         return False
 
-    reachable_tiles = selected_piece["reachable"](i, j, is_white_turn)
+    reachable_tiles = selected_piece.reachable(i, j, is_white_turn)
 
     print(f"Places that you can move: {reachable_tiles}")
+
+    (to_i, to_j) = ask_place()
+
+    if (to_i, to_j) not in reachable_tiles:
+        print(f"You cannot move it there!!")
+        return False
+
+    board[i][j] = 0
+    board[to_i][to_j] = selected_piece.id
 
     return True
 
@@ -164,3 +178,5 @@ while True:
     print("")
     print("-" * 30)
     print("")
+
+    is_white_turn = not is_white_turn
