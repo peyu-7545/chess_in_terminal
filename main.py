@@ -124,13 +124,13 @@ def ask_place():
 
     if not (len(file) == 1 and ord("a") <= ord(file) <= ord("h")):
         print("File must be a letter between a and h.")
-        return False
+        return None
 
     rank = input("rank (1~8): ")
 
     if not (rank.isdigit() and 1 <= int(rank) <= 8):
         print("Rank must be an integer between 1 and 8.")
-        return False
+        return None
 
     i = 8 - int(rank)
     j = ord(file) - ord("a")
@@ -139,31 +139,41 @@ def ask_place():
 
 def select():
 
-    (i, j) = ask_place()
+    move_from = ask_place()
 
-    selected_piece = id_to_piece[board[i][j]]
+    if move_from is None:
+        return False
+
+    (from_i, from_j) = move_from
+
+    selected_piece = id_to_piece[board[from_i][from_j]]
 
     if selected_piece is None:
-        print("There is nothing where you selected!!")
+        print("There is nothing where you selected")
         return False
 
-    print(f"Your select: {i}, {j}: {selected_piece.char}")
+    print(f"Your select: {from_i}, {from_j}: {selected_piece.char}")
 
     if selected_piece.color() != is_white_turn:
-        print("The piece you choice is not yours!!")
+        print("The piece you choice is not yours")
         return False
 
-    reachable_tiles = selected_piece.reachable(i, j, is_white_turn)
+    reachable_tiles = selected_piece.reachable(from_i, from_j, is_white_turn)
 
     print(f"Places that you can move: {reachable_tiles}")
 
-    (to_i, to_j) = ask_place()
+    move_to = ask_place()
+
+    if move_to is None:
+        return False
+
+    (to_i, to_j) = move_to
 
     if (to_i, to_j) not in reachable_tiles:
         print(f"You cannot move it there!!")
         return False
 
-    board[i][j] = 0
+    board[from_i][from_j] = 0
     board[to_i][to_j] = selected_piece.id
 
     return True
