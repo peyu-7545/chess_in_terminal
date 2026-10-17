@@ -1,7 +1,11 @@
 from enum import Enum
-
+import signal
 import sys
+# Ctrl+Cが押されたら入力中でも強制終了する
+signal.signal(signal.SIGINT, lambda signum, frame: sys.exit(0))
 
+# ANSI escape sequenceを直感的に扱うためのクラス
+# ターミナルがANSIに対応していない場合は何もしない
 class ANSI_SGR:
 
     _CODES = {
@@ -29,18 +33,6 @@ class ANSI_SGR:
 
 ansi = ANSI_SGR()
 
-board = [
-    [-4, -2, -3, -5, -6, -3, -2, -4],
-    [-1, -1, -1, -1, -1, -1, -1, -1],
-    [-0, -0, -0, -0, -0, -0, -0, -0],
-    [-0, -0, -0, -0, -0, -0, -0, -0],
-    [+0, +0, +0, +0, +0, +0, +0, +0],
-    [+0, +0, +0, +0, +0, +0, +0, +0],
-    [+1, +1, +1, +1, +1, +1, +1, +1],
-    [+4, +2, +3, +5, +6, +3, +2, +4],
-]
-
-
 def in_board(i, j):
     return 0 <= i and i < 8 and 0 <= j and j < 8
 
@@ -50,27 +42,27 @@ def symmetry_piece_reachable(max_dist, cond):
     def fn(i, j, moving_piece):
         result = []
 
-        for di in range(-2, 3):
-            for dj in range(-2, 3):
+        for di in [-2, -1, 0, 1, 2]:
+            for dj in [-2, -1, 0, 1, 2]:
 
                 if di * di + dj * dj in cond:
                     for dist in range(1, max_dist + 1):
                         ni = i + di * dist
                         nj = j + dj * dist
 
+                        # 盤外へは移動できない
                         if not in_board(ni, nj):
-                            # 盤外
                             break
 
-                        piece = id_to_piece[board[ni][nj]]
+                        piece = board[ni][nj]
 
-                        # 自分の駒があるなら進めないので終了
+                        # 自分の駒があるなら進めない
                         if piece is not None and piece.color() == moving_piece.color():
                             break
 
                         result.append((ni, nj))
 
-                        # 相手の駒があるなら次へ進めないので終了
+                        # 相手の駒があるなら次へ進めない
                         if piece is not None and piece.color() != moving_piece.color():
                             break
 
@@ -84,16 +76,21 @@ def pawn_reachable(i, j, moving_piece):
 
     forward = -1 if moving_piece.color() == Color.White else 1
 
+    if moving_piece.moved:
+        move_range = [1]
+    else:
+        move_range = [1, 2]
+
     # 直進
-    for dist in range(1, (1 if moving_piece.moved else 2) + 1):
+    for dist in move_range:
         ni = i + forward * dist
         nj = j
 
+        # 盤外へは移動できない
         if not in_board(ni, nj):
-            # 盤外
-            continue
+            break
 
-        if id_to_piece[board[ni][nj]] is None:
+        if board[ni][nj] is None:
             # 何もなければ直進
             result.append((ni, nj))
 
@@ -105,7 +102,7 @@ def pawn_reachable(i, j, moving_piece):
             # 盤外
             continue
 
-        forward_piece = id_to_piece[board[ni][nj]]
+        forward_piece = board[ni][nj]
 
         if (
             forward_piece is not None
@@ -126,11 +123,10 @@ def index_to_coord(i, j):
 
 
 class Piece:
-    def __init__(self, char, point, reachable, id):
+    def __init__(self, char, point, reachable):
         self.char = char
         self.point = point
         self.reachable = reachable
-        self.id = id
         self.moved = False
 
     def color(self):
@@ -144,21 +140,32 @@ bishop_reachable = symmetry_piece_reachable(8, [2])
 knight_reachable = symmetry_piece_reachable(1, [5])
 
 id_to_piece = {
-    -6: Piece("k", float("inf"), king_reachable, -6),
-    -5: Piece("q", 9.0, queen_reachable, -5),
-    -4: Piece("r", 5.0, rook_reachable, -4),
-    -3: Piece("b", 3.0, bishop_reachable, -3),
-    -2: Piece("n", 3.0, knight_reachable, -2),
-    -1: Piece("p", 1.0, pawn_reachable, -1),
-     0: None,
-    +1: Piece("P", 1.0, pawn_reachable, +1),
-    +2: Piece("N", 3.0, knight_reachable, +2),
-    +3: Piece("B", 3.0, bishop_reachable, +3),
-    +4: Piece("R", 5.0, rook_reachable, +4),
-    +5: Piece("Q", 9.0, queen_reachable, +5),
-    +6: Piece("K", float("inf"), king_reachable, +6),
+    -6: ["k", float("inf"), king_reachable],
+    -5: ["q", 9.0, queen_reachable],
+    -4: ["r", 5.0, rook_reachable],
+    -3: ["b", 3.0, bishop_reachable],
+    -2: ["n", 3.0, knight_reachable],
+    -1: ["p", 1.0, pawn_reachable],
+    +1: ["P", 1.0, pawn_reachable],
+    +2: ["N", 3.0, knight_reachable],
+    +3: ["B", 3.0, bishop_reachable],
+    +4: ["R", 5.0, rook_reachable],
+    +5: ["Q", 9.0, queen_reachable],
+    +6: ["K", float("inf"), king_reachable],
 }
 
+initial_board_data = [
+    [-4, -2, -3, -5, -6, -3, -2, -4],
+    [-1, -1, -1, -1, -1, -1, -1, -1],
+    [-0, -0, -0, -0, -0, -0, -0, -0],
+    [-0, -0, -0, -0, -0, -0, -0, -0],
+    [+0, +0, +0, +0, +0, +0, +0, +0],
+    [+0, +0, +0, +0, +0, +0, +0, +0],
+    [+1, +1, +1, +1, +1, +1, +1, +1],
+    [+4, +2, +3, +5, +6, +3, +2, +4],
+]
+
+board = [list(map(lambda x: Piece(*id_to_piece[x]) if x != 0 else None, line)) for line in initial_board_data]
 
 class Color(Enum):
     White = 1
@@ -180,15 +187,17 @@ def render():
         for j, piece in enumerate(line):
 
             if (i, j) in reachable_tiles:
-                bg_color = ansi.bg_cyan
+                bg_color = ansi.bg_cyan if (i + j) % 2 == 0 else ansi.bg_blue
             else:
                 # 白と緑の市松模様にする
                 bg_color = ansi.bg_white if (i + j) % 2 == 0 else ansi.bg_green
 
-            if piece == 0:
+            piece = piece
+
+            if piece is None:
                 char = " " if ansi.support_ansi else "."
             else:
-                char = id_to_piece[piece].char
+                char = piece.char
 
             print(bg_color + ansi.bold, end="")
             print(char, end="")
@@ -203,6 +212,9 @@ def ask_place():
 
     input_chars = list(input()) # ユーザーの入力を1文字ずつ分割した配列
     error = False # この関数でエラーが発生したか
+
+    file = ""
+    rank = ""
 
     if len(input_chars) != 2:
         # 入力がちょうど2文字でないとfileとrankに分割できない
@@ -239,32 +251,35 @@ def game_cycle():
     print("Please select piece: ", end="")
     move_from = ask_place()
 
+    # 選ばれなかった場合はここで終了
     if move_from is None:
         return False
 
     from_i, from_j = move_from
 
-    selected_piece = id_to_piece[board[from_i][from_j]]
+    selected_piece = board[from_i][from_j]
 
+    # 選ばれた座標に駒がない場合も終了
     if selected_piece is None:
-        print(f"{ansi.bold}[Info] There is nothing where you selected!{ansi.reset}")
+        print(f"{ansi.red}{ansi.bold}[Error] There is nothing where you selected.{ansi.reset}")
         return False
 
     print(f"You selected: {ansi.bold}{selected_piece.char}{ansi.reset}")
 
-    if selected_piece.color() != turn:
-        print(f"{ansi.bold}[Info] The piece that you choice is not yours!{ansi.reset}")
+    # 相手の駒を選んだ場合も終了
+    if selected_piece.color() == turn.opponent():
+        print(f"{ansi.red}{ansi.bold}[Error] The piece that you choice is not yours.{ansi.reset}")
         return False
 
     reachable_tiles = selected_piece.reachable(from_i, from_j, selected_piece)
 
     if len(reachable_tiles) == 0:
-        print(f"{ansi.bold}[Info] The piece cannot be moved anywhere!{ansi.reset}")
+        print(f"{ansi.red}{ansi.bold}[Error] The piece cannot be moved anywhere.{ansi.reset}")
         return False
 
     render()
 
-    print("Please select where to move: ", end="")
+    print(f"Please select where to move: ", end="")
     move_to = ask_place()
 
     if move_to is None:
@@ -273,11 +288,13 @@ def game_cycle():
     to_i, to_j = move_to
 
     if (to_i, to_j) not in reachable_tiles:
-        print(f"You cannot move it there!!")
+        print(f"{ansi.red}{ansi.bold}[Error] You cannot move it there.")
         return False
 
-    board[from_i][from_j] = 0
-    board[to_i][to_j] = selected_piece.id
+    board[from_i][from_j] = None
+    board[to_i][to_j] = selected_piece
+
+    selected_piece.moved = True
 
     print("")
 
@@ -286,7 +303,7 @@ def game_cycle():
 turn = Color.White
 
 while True:
-    print(f"~~~ {turn.name}'s turn! ~~~")
+    print(f"--- {ansi.bold}{turn.name}'s turn{ansi.reset} ---")
 
     while True:
         is_success = game_cycle()
@@ -296,5 +313,4 @@ while True:
 
     turn = turn.opponent()
 
-
-# TODO: reachable_tilesの背景色をcyan単色ではなく後ろのwhite/greenを透過しているような色にする
+    print('\n' * 100)
