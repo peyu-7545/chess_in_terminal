@@ -7,7 +7,6 @@ import sys
 # Ctrl+Cが押されたら入力中でも強制終了する
 signal.signal(signal.SIGINT, lambda _signum, _frame: sys.exit(0))
 
-
 # ANSI escape sequenceを直感的に扱うためのクラス
 # ターミナルがANSIに対応していない場合は何もしない
 class ANSI_SGR:
@@ -101,7 +100,7 @@ class Game:
     }
 
     # 選択中の駒が動ける領域
-    reachable_tiles: dict[Tile, ReachableResult] = {}
+    reachable_tiles: dict[tuple[int, int], ReachableResult] = {}
 
     def render(self):
 
@@ -238,7 +237,7 @@ class Piece:
         char: str,
         kind: Kind,
         color: Color,
-        reachable: Callable[[Game, Piece, int, int], dict[Tile, ReachableResult]],
+        reachable: Callable[[Game, Piece, int, int], dict[tuple[int, int], ReachableResult]],
     ):
         self.char = char
         self.kind = kind
@@ -256,7 +255,7 @@ def pawn_reachable(color: Color):
     forward_direction = -1 if color == Color.White else 1
 
     def fn(game: Game, self: Piece, i: int, j: int):
-        result: dict[Tile, ReachableResult] = {}
+        result: dict[tuple[int, int], ReachableResult] = {}
 
         # 直進
         for di in [1] if self.moved else [1, 2]:
@@ -321,7 +320,7 @@ def pawn_reachable(color: Color):
 
 
 def knight_reachable(game: Game, self: Piece, i: int, j: int):
-    result: dict[Tile, ReachableResult] = {}
+    result: dict[tuple[int, int], ReachableResult] = {}
 
     for di, dj in [
         (-1, -2),
@@ -349,7 +348,7 @@ def knight_reachable(game: Game, self: Piece, i: int, j: int):
 
 
 def bishop_reachable(game: Game, self: Piece, i: int, j: int):
-    result: dict[Tile, ReachableResult] = {}
+    result: dict[tuple[int, int], ReachableResult] = {}
 
     for di, dj in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
         for scale in range(1, 8):
@@ -373,7 +372,7 @@ def bishop_reachable(game: Game, self: Piece, i: int, j: int):
 
 
 def rook_reachable(game: Game, self: Piece, i: int, j: int):
-    result: dict[Tile, ReachableResult] = {}
+    result: dict[tuple[int, int], ReachableResult] = {}
 
     for di, dj in [(0, -1), (-1, 0), (1, 0), (0, 1)]:
         for scale in range(1, 8):
@@ -397,7 +396,7 @@ def rook_reachable(game: Game, self: Piece, i: int, j: int):
 
 
 def queen_reachable(game: Game, self: Piece, i: int, j: int):
-    result: dict[Tile, ReachableResult] = {}
+    result: dict[tuple[int, int], ReachableResult] = {}
 
     for di, dj in [
         (-1, -1),
@@ -430,7 +429,7 @@ def queen_reachable(game: Game, self: Piece, i: int, j: int):
 
 
 def king_reachable(game: Game, self: Piece, i: int, j: int):
-    result: dict[Tile, ReachableResult] = {}
+    result: dict[tuple[int, int], ReachableResult] = {}
 
     for di, dj in [
         (-1, -1),
@@ -459,7 +458,7 @@ def king_reachable(game: Game, self: Piece, i: int, j: int):
 
 char_to_piece: dict[
     str,
-    tuple[Kind, Color, Callable[[Game, Piece, int, int], dict[Tile, ReachableResult]]],
+    tuple[Kind, Color, Callable[[Game, Piece, int, int], dict[tuple[int, int], ReachableResult]]],
 ] = {
     "P": (Kind.Pawn, Color.White, pawn_reachable(Color.White)),
     "N": (Kind.Knight, Color.White, knight_reachable),
@@ -474,8 +473,6 @@ char_to_piece: dict[
     "q": (Kind.Queen, Color.Black, queen_reachable),
     "k": (Kind.King, Color.Black, king_reachable),
 }
-
-Tile = tuple[int, int]
 
 ansi = ANSI_SGR()
 
