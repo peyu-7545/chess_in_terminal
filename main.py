@@ -84,6 +84,15 @@ class Game:
 
         self.turn = Color.White
 
+        # 直前に2マス動いたPawn
+        self.can_en_passant: dict[Color, Piece | None] = {
+            Color.White: None,
+            Color.Black: None,
+        }
+
+        # 選択中の駒が動ける範囲
+        self.reachable_tiles: set[ReachableResult] = set()
+
     def is_in(self, i: int, j: int):
         return 0 <= i and i < 8 and 0 <= j and j < 8
 
@@ -96,15 +105,6 @@ class Game:
     def coord_to_index(self, rank: str, file: str):
         return (8 - int(rank), ord(file) - ord("a"))
 
-    # 直前に2マス動いた駒
-    can_en_passant: dict[Color, Piece | None] = {
-        Color.White: None,
-        Color.Black: None,
-    }
-
-    # 選択中の駒が動ける領域
-    reachable_tiles: dict[tuple[int, int], ReachableResult] = {}
-
     def render(self):
 
         print("")
@@ -115,7 +115,7 @@ class Game:
 
             for j in range(8):
 
-                if any(x == (i, j) for x in self.reachable_tiles.keys()):
+                if any((x.i, x.j) == (i, j) for x in self.reachable_tiles):
                     # 到達可能マス
                     bg_color = ansi.bg_blue
                 else:
@@ -216,14 +216,14 @@ class Game:
 
             to_i, to_j = move_to
 
-            reachable_move_to = next((x for x in self.reachable_tiles.items() if x[0] == move_to), None)
+            reachable_move_to = next((x for x in self.reachable_tiles if (x.i, x.j) == move_to), None)
 
             if not reachable_move_to:
                 # 入力された場所に行けない場合はエラー
                 printErr("[Error] You cannot move it there.")
                 continue
 
-            reachable_move_to[1].side_effect(self)
+            reachable_move_to.side_effect(self)
 
             self.set(from_i, from_j, None)
             self.set(to_i, to_j, selected_piece)
@@ -236,7 +236,7 @@ class Game:
 
         self.turn = self.turn.opponent() # ターンを反転
         self.can_en_passant[self.turn] = None # アンパッサン可能駒を消去
-        self.reachable_tiles = {} # 到達可能駒を消去
+        self.reachable_tiles.clear() # 到達可能駒を消去
 
     def play(self):
         while True:
@@ -244,7 +244,9 @@ class Game:
 
 
 class ReachableResult:
-    def __init__(self, side_effect: Callable[[Game], None] = lambda _: None):
+    def __init__(self, i: int, j: int, side_effect: Callable[[Game], None] = lambda _: None):
+        self.i = i
+        self.j = j
         self.side_effect = side_effect
 
 
@@ -252,7 +254,7 @@ def pawn_reachable(color: Color):
     forward_direction = -1 if color == Color.White else 1
 
     def fn(game: Game, self: Piece, i: int, j: int):
-        result: dict[tuple[int, int], ReachableResult] = {}
+        result: set[ReachableResult] = set()
 
         # 直進
         for di in [1] if self.moved else [1, 2]:
@@ -262,13 +264,13 @@ def pawn_reachable(color: Color):
             if game.is_in(ni, nj) and game.get(ni, nj) is None:
                 # 何もないなら進める
                 if di == 1:
-                    result[(ni, nj)] = ReachableResult()
+                    result.add(ReachableResult(ni, nj))
                 else:
                     # 2マス進んだ場合は、en_passantフラグを立てる
                     def set_flag(game: Game):
                         game.can_en_passant[self.color] = self
 
-                    result[(ni, nj)] = ReachableResult(set_flag)
+                    result.add(ReachableResult(ni, nj, set_flag))
             else:
                 # 何かあったら進めない
                 break
@@ -286,7 +288,7 @@ def pawn_reachable(color: Color):
 
             if target is not None and target.color == self.color.opponent():
                 # 敵がいるなら進める
-                result[(ni, nj)] = ReachableResult()
+                result.add(ReachableResult(ni, nj))
 
         # En passant
         for dj in [-1, 1]:
@@ -309,7 +311,7 @@ def pawn_reachable(color: Color):
                 def capture_afterimage(game: Game):
                     game.set(mi, mj, None)
 
-                result[(ni, nj)] = ReachableResult(capture_afterimage)
+                result.add(ReachableResult(ni, nj, capture_afterimage))
 
         return result
 
@@ -317,18 +319,9 @@ def pawn_reachable(color: Color):
 
 
 def knight_reachable(game: Game, self: Piece, i: int, j: int):
-    result: dict[tuple[int, int], ReachableResult] = {}
+    result: set[ReachableResult] = set()
 
-    for di, dj in [
-        (-1, -2),
-        (1, -2),
-        (-2, -1),
-        (2, -1),
-        (-2, 1),
-        (2, 1),
-        (-1, 2),
-        (1, 2),
-    ]:
+    for di, dj in [(-1, -2), (1, -2), (-2, -1), (2, -1), (-2, 1), (2, 1), (-1, 2), (1, 2)]:
         ni, nj = (i + di, j + dj)
 
         if not game.is_in(ni, nj):
@@ -339,13 +332,13 @@ def knight_reachable(game: Game, self: Piece, i: int, j: int):
 
         if target is None or target.color == self.color.opponent():
             # 何もないか、敵がいるなら進める
-            result[(ni, nj)] = ReachableResult()
+            result.add(ReachableResult(ni, nj))
 
     return result
 
 
 def bishop_reachable(game: Game, self: Piece, i: int, j: int):
-    result: dict[tuple[int, int], ReachableResult] = {}
+    result: set[ReachableResult] = set()
 
     for di, dj in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
         for scale in range(1, 8):
@@ -359,7 +352,7 @@ def bishop_reachable(game: Game, self: Piece, i: int, j: int):
 
             if target is None or target.color == self.color.opponent():
                 # 何もないか、敵がいるならそのマスに進める
-                result[(ni, nj)] = ReachableResult()
+                result.add(ReachableResult(ni, nj))
 
             if target is not None:
                 # 何かいるならそれ以上進めない
@@ -369,7 +362,7 @@ def bishop_reachable(game: Game, self: Piece, i: int, j: int):
 
 
 def rook_reachable(game: Game, self: Piece, i: int, j: int):
-    result: dict[tuple[int, int], ReachableResult] = {}
+    result: set[ReachableResult] = set()
 
     for di, dj in [(0, -1), (-1, 0), (1, 0), (0, 1)]:
         for scale in range(1, 8):
@@ -383,7 +376,7 @@ def rook_reachable(game: Game, self: Piece, i: int, j: int):
 
             if target is None or target.color == self.color.opponent():
                 # 何もないか、敵がいるならそのマスに進める
-                result[(ni, nj)] = ReachableResult()
+                result.add(ReachableResult(ni, nj))
 
             if target is not None:
                 # 何かいるならそれ以上進めない
@@ -393,7 +386,7 @@ def rook_reachable(game: Game, self: Piece, i: int, j: int):
 
 
 def queen_reachable(game: Game, self: Piece, i: int, j: int):
-    result: dict[tuple[int, int], ReachableResult] = {}
+    result: set[ReachableResult] = set()
 
     for di, dj in [
         (-1, -1),
@@ -416,7 +409,7 @@ def queen_reachable(game: Game, self: Piece, i: int, j: int):
 
             if target is None or target.color == self.color.opponent():
                 # 何もないか、敵がいるならそのマスに進める
-                result[(ni, nj)] = ReachableResult()
+                result.add(ReachableResult(ni, nj))
 
             if target is not None:
                 # 何かいるならそれ以上進めない
@@ -426,18 +419,9 @@ def queen_reachable(game: Game, self: Piece, i: int, j: int):
 
 
 def king_reachable(game: Game, self: Piece, i: int, j: int):
-    result: dict[tuple[int, int], ReachableResult] = {}
+    result: set[ReachableResult] = set()
 
-    for di, dj in [
-        (-1, -1),
-        (1, -1),
-        (-1, 1),
-        (1, 1),
-        (0, -1),
-        (-1, 0),
-        (1, 0),
-        (0, 1),
-    ]:
+    for di, dj in [(-1, -1), (1, -1), (-1, 1), (1, 1), (0, -1), (-1, 0), (1, 0), (0, 1)]:
         ni, nj = (i + di, j + dj)
 
         if not game.is_in(ni, nj):
@@ -448,7 +432,7 @@ def king_reachable(game: Game, self: Piece, i: int, j: int):
 
         if target is None or target.color == self.color.opponent():
             # 何もないか、敵がいるならそのマスに進める
-            result[(ni, nj)] = ReachableResult()
+            result.add(ReachableResult(ni, nj))
 
     return result
 
@@ -457,11 +441,7 @@ class Piece:
     
     char_to_piece: dict[
         str,
-        tuple[
-            Color,
-            Kind,
-            Callable[[Game, Piece, int, int], dict[tuple[int, int], ReachableResult]],
-        ],
+        tuple[Color, Kind, Callable[[Game, Piece, int, int], set[ReachableResult]]],
     ] = {
         "P": (Color.White, Kind.Pawn,   pawn_reachable(Color.White)),
         "N": (Color.White, Kind.Knight, knight_reachable),
