@@ -12,27 +12,6 @@ signal.signal(signal.SIGINT, lambda _signum, _frame: sys.exit(0))
 # ターミナルがANSIに対応していない場合は何もしない
 class ANSI_SGR:
 
-    _CODES = {
-        "reset":      "00",
-        "bold":       "01",
-        "black":      "30",
-        "red":        "31",
-        "green":      "32",
-        "yellow":     "33",
-        "blue":       "34",
-        "magenta":    "35",
-        "cyan":       "36",
-        "white":      "37",
-        "bg_black":   "40",
-        "bg_red":     "41",
-        "bg_green":   "42",
-        "bg_yellow":  "43",
-        "bg_blue":    "44",
-        "bg_magenta": "45",
-        "bg_cyan":    "46",
-        "bg_white":   "47",
-    }
-
     def __init__(self):
         self.support_ansi = sys.stdout.isatty()
 
@@ -45,6 +24,12 @@ class ANSI_SGR:
 
         return "\033[" + self._CODES[name] + "m"
 
+    _CODES = {
+        "reset": "00", "bold": "01",
+        "black": "30", "red": "31", "green": "32", "yellow": "33", "blue": "34", "magenta": "35", "cyan": "36", "white": "37",
+        "bg_black": "40", "bg_red": "41", "bg_green": "42", "bg_yellow": "43", "bg_blue": "44", "bg_magenta": "45", "bg_cyan": "46", "bg_white": "47",
+    }
+
 
 class Color(Enum):
     White = 1
@@ -55,32 +40,60 @@ class Color(Enum):
 
 
 class Kind(Enum):
-    Pawn = 1
+    Pawn   = 1
     Knight = 2
     Bishop = 3
-    Rook = 4
-    Queen = 5
-    King = 6
+    Rook   = 4
+    Queen  = 5
+    King   = 6
+
+class Place:
+    def __init__(self, i: int, j: int):
+        self.i = i
+        self.j = j
+
+    def is_in(self):
+        return 0 <= self.i and self.i < 8 and 0 <= self.j and self.j < 8
+
+    def is_out(self):
+        return not self.is_in()
+
+    def __iter__(self):
+        yield self.i
+        yield self.j
+
+    def __add__(self, other: Place):
+        return Place(self.i + other.i, self.j + other.j)
+
+    def __rmul__(self, other: int):
+        return Place(other * self.i, other * self.j)
+
+
+def FEN_to_array(fen: str):
+    result: list[list[Piece | None]] = [[None] * 8 for _ in range(8)]
+
+    # FENではrankはスラッシュで区切られる
+    for i, line in enumerate(fen.split("/")):
+        j = 0 # 左から何マス目か
+
+        for char in line:
+            if char.isdigit():
+                # 連続する空マスはその長さで表される
+                j += int(char)
+            else:
+                # 駒があるマスはアルファベットで表される
+                result[i][j] = Piece(char)
+                j += 1
+
+    return result
 
 
 class Game:
 
     # FEN形式の盤面を表す文字列を受け取ってゲームを初期化する
     def __init__(self, fen: str):
-        self.data: list[list[Piece | None]] = [[None] * 8 for _ in range(8)]
 
-        # FENではrankはスラッシュで区切られる
-        for i, line in enumerate(fen.split("/")):
-            j = 0  # 何マス目か
-
-            for char in line:
-                if char.isdigit():
-                    # 連続する空マスはその長さで表される
-                    j += int(char)
-                else:
-                    # 駒があるマスはアルファベットで表される
-                    self.data[i][j] = Piece(char)
-                    j += 1
+        self.data = FEN_to_array(fen)
 
         self.turn = Color.White
 
@@ -90,20 +103,40 @@ class Game:
             Color.Black: None,
         }
 
-        # 選択中の駒が動ける範囲
+        # 選択中の駒が動けるマスの集合
         self.reachable_tiles: set[ReachableResult] = set()
 
-    def is_in(self, i: int, j: int):
-        return 0 <= i and i < 8 and 0 <= j and j < 8
+        # 相手のKingが入れないマスの集合
+        self.coverd: dict[Color, list[list[bool]]] = {
+            Color.White: [[False] * 8 for _ in range(8)],
+            Color.Black: [[False] * 8 for _ in range(8)],
+        }
 
-    def get(self, i: int, j: int):
-        return self.data[i][j]
+        self.update_coverd()
 
-    def set(self, i: int, j: int, x: Piece | None):
-        self.data[i][j] = x
+    def update_coverd(self):
+
+        self.coverd[Color.White] = [[False] * 8 for _ in range(8)]
+        self.coverd[Color.Black] = [[False] * 8 for _ in range(8)]
+
+        for i, line in enumerate(self.data):
+            for j, piece in enumerate(line):
+
+                if piece is None:
+                    continue
+
+                for x in piece.reachable(self, piece, Place(i, j)):
+                    if not x.move_only:
+                        self.coverd[piece.color][x.place.i][x.place.j] = True
+
+    def get(self, x: Place):
+        return self.data[x.i][x.j]
+
+    def set(self, x: Place, y: Piece | None):
+        self.data[x.i][x.j] = y
 
     def coord_to_index(self, rank: str, file: str):
-        return (8 - int(rank), ord(file) - ord("a"))
+        return Place(8 - int(rank), ord(file) - ord("a"))
 
     def render(self):
 
@@ -115,14 +148,14 @@ class Game:
 
             for j in range(8):
 
-                if any((x.i, x.j) == (i, j) for x in self.reachable_tiles):
+                if any(x.place == Place(i, j) for x in self.reachable_tiles):
                     # 到達可能マス
                     bg_color = ansi.bg_blue
                 else:
                     # 通常マスは白と黒(緑)の市松模様にする
                     bg_color = ansi.bg_white if (i + j) % 2 == 0 else ansi.bg_green
 
-                piece = self.get(i, j)
+                piece = self.get(Place(i, j))
 
                 if piece is None:
                     char = " " if ansi.support_ansi else "."
@@ -152,20 +185,24 @@ class Game:
 
         file, rank = input_chars
 
+        ok = True
+
         if not (len(file) == 1 and ord("a") <= ord(file) <= ord("h")):
             # fileがaからhの間の英子文字でない
             printErr("[Error] The file must be a lower alphabet between a and h.")
-            return None
+            ok = False
 
         if not (rank.isdigit() and 1 <= int(rank) <= 8):
             # rankが1から8の間の数字でない
             printErr("[Error] The rank must be an integer between 1 and 8.")
-            return None
+            ok = False
 
-        return self.coord_to_index(rank, file)
+        return self.coord_to_index(rank, file) if ok else None
 
     # 1ターン分の動作を行う. 正しく入力されるまで繰り返すのでエラーは起きない.
     def game_cycle(self):
+
+        self.update_coverd()
 
         print(f"--- {ansi.bold}{game.turn.name}'s turn{ansi.reset} ---")
         self.render()
@@ -180,8 +217,7 @@ class Game:
                 # 正しく入力されなかった場合はやり直し
                 continue
 
-            from_i, from_j = move_from
-            selected_piece = self.get(from_i, from_j)
+            selected_piece = self.get(move_from)
 
             if selected_piece is None:
                 # 選ばれた座標に駒がないときはエラー
@@ -193,18 +229,14 @@ class Game:
                 printErr("[Error] The piece that you choice is not yours.")
                 continue
 
-            self.reachable_tiles = selected_piece.reachable(self, selected_piece, from_i, from_j)
+            self.reachable_tiles = set(x for x in selected_piece.reachable(self, selected_piece, move_from) if not x.cover_only)
 
             if len(self.reachable_tiles) == 0:
                 # どこにも動かせない
                 printErr("[Error] The piece cannot move anywhere.")
                 continue
 
-            break
-
-        self.render()
-
-        while True:
+            self.render()
 
             # 移動先のマスを選ばせる
             print(f"Please select where to move: ", end="")
@@ -214,20 +246,21 @@ class Game:
                 # 正しく入力されなかったらやり直し
                 continue
 
-            to_i, to_j = move_to
-
-            reachable_move_to = next((x for x in self.reachable_tiles if (x.i, x.j) == move_to), None)
+            reachable_move_to = next((x for x in self.reachable_tiles if x.place == move_to), None)
 
             if not reachable_move_to:
                 # 入力された場所に行けない場合はエラー
                 printErr("[Error] You cannot move it there.")
                 continue
 
+            # 副作用を実行
             reachable_move_to.side_effect(self)
 
-            self.set(from_i, from_j, None)
-            self.set(to_i, to_j, selected_piece)
+            # 移動
+            self.set(move_from, None)
+            self.set(move_to, selected_piece)
 
+            # 移動済みにする
             selected_piece.moved = True
 
             break
@@ -244,60 +277,62 @@ class Game:
 
 
 class ReachableResult:
-    def __init__(self, i: int, j: int, side_effect: Callable[[Game], None] = lambda _: None):
-        self.i = i
-        self.j = j
+
+    def __init__(self, place: Place, side_effect: Callable[[Game], None] = lambda _: None, move_only: bool = False, cover_only: bool = False):
+        self.place = place
         self.side_effect = side_effect
+        self.move_only = move_only
+        self.cover_only = cover_only
 
 
 def pawn_reachable(color: Color):
     forward_direction = -1 if color == Color.White else 1
 
-    def fn(game: Game, self: Piece, i: int, j: int):
+    def fn(game: Game, self: Piece, move_from: Place):
         result: set[ReachableResult] = set()
 
         # 直進
-        for di in [1] if self.moved else [1, 2]:
-            ni = i + di * forward_direction
-            nj = j
+        for di in ([1] if self.moved else [1, 2]):
 
-            if game.is_in(ni, nj) and game.get(ni, nj) is None:
+            move_to = move_from + Place(di * forward_direction, 0)
+
+            if move_to.is_in() and game.get(move_to) is None:
                 # 何もないなら進める
                 if di == 1:
-                    result.add(ReachableResult(ni, nj))
+                    result.add(ReachableResult(move_to, move_only = True))
                 else:
                     # 2マス進んだ場合は、en_passantフラグを立てる
                     def set_flag(game: Game):
                         game.can_en_passant[self.color] = self
 
-                    result.add(ReachableResult(ni, nj, set_flag))
+                    result.add(ReachableResult(move_to, set_flag, move_only = True))
             else:
                 # 何かあったら進めない
                 break
 
         # 斜め前
         for dj in [-1, 1]:
-            ni = i + forward_direction
-            nj = j + dj
+            move_to = move_from + Place(forward_direction, dj)
 
-            if not game.is_in(ni, nj):
-                # 盤外
+            if move_to.is_out():
                 continue
 
-            target = game.get(ni, nj)
+            target = game.get(move_to)
 
             if target is not None and target.color == self.color.opponent():
                 # 敵がいるなら進める
-                result.add(ReachableResult(ni, nj))
+                result.add(ReachableResult(move_to))
+            else:
+                result.add(ReachableResult(move_to, cover_only = True))
 
         # En passant
         for dj in [-1, 1]:
-            mi, mj = (i, j + dj)
+            move_pass = move_from + Place(0, dj)
 
-            if not game.is_in(mi, mj):
+            if not move_pass.is_in():
                 continue
 
-            target = game.get(mi, mj)
+            target = game.get(move_pass)
 
             if (
                 target is not None
@@ -306,53 +341,51 @@ def pawn_reachable(color: Color):
             ):
 
                 # 敵がいて、かつ敵が2マス動いた直後なら進める
-                ni, nj = (mi + forward_direction, mj)
+                move_to = move_from + Place(forward_direction, dj)
 
                 def capture_afterimage(game: Game):
-                    game.set(mi, mj, None)
+                    game.set(move_pass, None)
 
-                result.add(ReachableResult(ni, nj, capture_afterimage))
+                result.add(ReachableResult(move_to, capture_afterimage))
 
         return result
 
     return fn
 
 
-def knight_reachable(game: Game, self: Piece, i: int, j: int):
+def knight_reachable(game: Game, self: Piece, move_from: Place):
     result: set[ReachableResult] = set()
 
-    for di, dj in [(-1, -2), (1, -2), (-2, -1), (2, -1), (-2, 1), (2, 1), (-1, 2), (1, 2)]:
-        ni, nj = (i + di, j + dj)
+    for d in [(-1, -2), (1, -2), (-2, -1), (2, -1), (-2, 1), (2, 1), (-1, 2), (1, 2)]:
+        move_to = move_from + Place(*d)
 
-        if not game.is_in(ni, nj):
-            # 盤外
+        if move_to.is_out():
             continue
 
-        target = game.get(ni, nj)
+        target = game.get(move_to)
 
-        if target is None or target.color == self.color.opponent():
+        if target is None or self.is_opponent(target):
             # 何もないか、敵がいるなら進める
-            result.add(ReachableResult(ni, nj))
+            result.add(ReachableResult(move_to))
 
     return result
 
 
-def bishop_reachable(game: Game, self: Piece, i: int, j: int):
+def bishop_reachable(game: Game, self: Piece, move_from: Place):
     result: set[ReachableResult] = set()
 
-    for di, dj in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
+    for d in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
         for scale in range(1, 8):
-            ni, nj = (i + di * scale, j + dj * scale)
+            move_to = move_from + scale * Place(*d)
 
-            if not game.is_in(ni, nj):
-                # 盤外
+            if move_to.is_out():
                 continue
 
-            target = game.get(ni, nj)
+            target = game.get(move_to)
 
-            if target is None or target.color == self.color.opponent():
+            if target is None or self.is_opponent(target):
                 # 何もないか、敵がいるならそのマスに進める
-                result.add(ReachableResult(ni, nj))
+                result.add(ReachableResult(move_to))
 
             if target is not None:
                 # 何かいるならそれ以上進めない
@@ -361,22 +394,21 @@ def bishop_reachable(game: Game, self: Piece, i: int, j: int):
     return result
 
 
-def rook_reachable(game: Game, self: Piece, i: int, j: int):
+def rook_reachable(game: Game, self: Piece, move_from: Place):
     result: set[ReachableResult] = set()
 
-    for di, dj in [(0, -1), (-1, 0), (1, 0), (0, 1)]:
+    for d in [(0, -1), (-1, 0), (1, 0), (0, 1)]:
         for scale in range(1, 8):
-            ni, nj = (i + di * scale, j + dj * scale)
+            move_to = move_from + scale * Place(*d)
 
-            if not game.is_in(ni, nj):
-                # 盤外
+            if move_to.is_out():
                 continue
 
-            target = game.get(ni, nj)
+            target = game.get(move_to)
 
-            if target is None or target.color == self.color.opponent():
+            if target is None or self.is_opponent(target):
                 # 何もないか、敵がいるならそのマスに進める
-                result.add(ReachableResult(ni, nj))
+                result.add(ReachableResult(move_to))
 
             if target is not None:
                 # 何かいるならそれ以上進めない
@@ -385,31 +417,21 @@ def rook_reachable(game: Game, self: Piece, i: int, j: int):
     return result
 
 
-def queen_reachable(game: Game, self: Piece, i: int, j: int):
+def queen_reachable(game: Game, self: Piece, move_from: Place):
     result: set[ReachableResult] = set()
 
-    for di, dj in [
-        (-1, -1),
-        (1, -1),
-        (-1, 1),
-        (1, 1),
-        (0, -1),
-        (-1, 0),
-        (1, 0),
-        (0, 1),
-    ]:
+    for d in [(-1, -1), (1, -1), (-1, 1), (1, 1), (0, -1), (-1, 0), (1, 0), (0, 1)]:
         for scale in range(1, 8):
-            ni, nj = (i + di * scale, j + dj * scale)
+            move_to = move_from + scale * Place(*d)
 
-            if not game.is_in(ni, nj):
-                # 盤外
+            if move_to.is_out():
                 continue
 
-            target = game.get(ni, nj)
+            target = game.get(move_to)
 
-            if target is None or target.color == self.color.opponent():
+            if target is None or self.is_opponent(target):
                 # 何もないか、敵がいるならそのマスに進める
-                result.add(ReachableResult(ni, nj))
+                result.add(ReachableResult(move_to))
 
             if target is not None:
                 # 何かいるならそれ以上進めない
@@ -418,30 +440,37 @@ def queen_reachable(game: Game, self: Piece, i: int, j: int):
     return result
 
 
-def king_reachable(game: Game, self: Piece, i: int, j: int):
+def king_reachable(game: Game, self: Piece, move_from: Place):
     result: set[ReachableResult] = set()
 
-    for di, dj in [(-1, -1), (1, -1), (-1, 1), (1, 1), (0, -1), (-1, 0), (1, 0), (0, 1)]:
-        ni, nj = (i + di, j + dj)
+    for d in [(-1, -1), (1, -1), (-1, 1), (1, 1), (0, -1), (-1, 0), (1, 0), (0, 1)]:
+        move_to = move_from + Place(*d)
 
-        if not game.is_in(ni, nj):
-            # 盤外
+        if move_to.is_out():
             continue
 
-        target = game.get(ni, nj)
+        target = game.get(move_to)
 
-        if target is None or target.color == self.color.opponent():
-            # 何もないか、敵がいるならそのマスに進める
-            result.add(ReachableResult(ni, nj))
+        if (target is None) or self.is_opponent(target):
+
+            if game.coverd[self.color.opponent()][move_to.i][move_to.j]:
+                # 相手の駒が利いているマスには進めない
+                continue
+
+            result.add(ReachableResult(move_to))
 
     return result
 
 
 class Piece:
-    
+    def __init__(self, symbol: str):
+        self.symbol = symbol
+        self.color, self.kind, self.reachable = Piece.char_to_piece[symbol]
+        self.moved = False
+
     char_to_piece: dict[
         str,
-        tuple[Color, Kind, Callable[[Game, Piece, int, int], set[ReachableResult]]],
+        tuple[Color, Kind, Callable[[Game, Piece, Place], set[ReachableResult]]],
     ] = {
         "P": (Color.White, Kind.Pawn,   pawn_reachable(Color.White)),
         "N": (Color.White, Kind.Knight, knight_reachable),
@@ -457,10 +486,8 @@ class Piece:
         "k": (Color.Black, Kind.King,   king_reachable),
     }
 
-    def __init__(self, symbol: str):
-        self.symbol = symbol
-        self.color, self.kind, self.reachable = Piece.char_to_piece[symbol]
-        self.moved = False
+    def is_opponent(self, other: Piece):
+        return self.color.opponent() == other.color
 
 
 ansi = ANSI_SGR()
@@ -471,3 +498,5 @@ def printErr(str: str):
 game = Game("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
 
 game.play()
+
+# coverされているマスにキングがいるなら何らかの駒を動かしてKingをcoverから外さなければならない
