@@ -7,29 +7,30 @@ import sys
 # Ctrl+Cが押されたら入力中でも強制終了する
 signal.signal(signal.SIGINT, lambda _signum, _frame: sys.exit(0))
 
+
 # ANSI escape sequenceを直感的に扱うためのクラス
 # ターミナルがANSIに対応していない場合は何もしない
 class ANSI_SGR:
 
     _CODES = {
-        "reset": "0",
-        "bold": "1",
-        "black": "30",
-        "red": "31",
-        "green": "32",
-        "yellow": "33",
-        "blue": "34",
-        "magenta": "35",
-        "cyan": "36",
-        "white": "37",
-        "bg_black": "40",
-        "bg_red": "41",
-        "bg_green": "42",
-        "bg_yellow": "43",
-        "bg_blue": "44",
+        "reset":      "00",
+        "bold":       "01",
+        "black":      "30",
+        "red":        "31",
+        "green":      "32",
+        "yellow":     "33",
+        "blue":       "34",
+        "magenta":    "35",
+        "cyan":       "36",
+        "white":      "37",
+        "bg_black":   "40",
+        "bg_red":     "41",
+        "bg_green":   "42",
+        "bg_yellow":  "43",
+        "bg_blue":    "44",
         "bg_magenta": "45",
-        "bg_cyan": "46",
-        "bg_white": "47",
+        "bg_cyan":    "46",
+        "bg_white":   "47",
     }
 
     def __init__(self):
@@ -63,20 +64,22 @@ class Kind(Enum):
 
 
 class Game:
+
+    # FEN形式の盤面を表す文字列を受け取ってゲームを初期化する
     def __init__(self, fen: str):
         self.data: list[list[Piece | None]] = [[None] * 8 for _ in range(8)]
 
         # FENではrankはスラッシュで区切られる
         for i, line in enumerate(fen.split("/")):
-            j = 0
+            j = 0  # 何マス目か
 
             for char in line:
-
-                # 連続する何もないマスはその長さで表される
                 if char.isdigit():
+                    # 連続する空マスはその長さで表される
                     j += int(char)
                 else:
-                    self.data[i][j] = Piece(char, *char_to_piece[char])
+                    # 駒があるマスはアルファベットで表される
+                    self.data[i][j] = Piece(char)
                     j += 1
 
         self.turn = Color.White
@@ -112,12 +115,11 @@ class Game:
 
             for j in range(8):
 
-                # 市松模様になるように背景色を決める
                 if any(x == (i, j) for x in self.reachable_tiles.keys()):
-                    # 到達可能マスなら水色系
-                    bg_color = ansi.bg_cyan if (i + j) % 2 == 0 else ansi.bg_blue
+                    # 到達可能マス
+                    bg_color = ansi.bg_blue
                 else:
-                    # 通常マスなら白と黒
+                    # 通常マスは白と黒(緑)の市松模様にする
                     bg_color = ansi.bg_white if (i + j) % 2 == 0 else ansi.bg_green
 
                 piece = self.get(i, j)
@@ -125,7 +127,7 @@ class Game:
                 if piece is None:
                     char = " " if ansi.support_ansi else "."
                 else:
-                    char = piece.char
+                    char = piece.symbol
 
                 print(bg_color + ansi.bold, end="")
                 print(char, end="")
@@ -162,88 +164,83 @@ class Game:
 
         return self.coord_to_index(rank, file)
 
-    # 1ターン分の動作を行う. 最後まで実行できたらTrueを返し, 不正な入力などで失敗したらFalseを返す.
+    # 1ターン分の動作を行う. 正しく入力されるまで繰り返すのでエラーは起きない.
     def game_cycle(self):
 
-        self.can_en_passant[self.turn] = None
-        self.reachable_tiles = {}
+        print(f"--- {ansi.bold}{game.turn.name}'s turn{ansi.reset} ---")
+        self.render()
+
+        while True:
+
+            # 動かす駒を選ばせる
+            print("Please select piece: ", end="")
+            move_from = self.ask_place()
+
+            if move_from is None:
+                # 正しく入力されなかった場合はやり直し
+                continue
+
+            from_i, from_j = move_from
+            selected_piece = self.get(from_i, from_j)
+
+            if selected_piece is None:
+                # 選ばれた座標に駒がないときはエラー
+                printErr("[Error] There is nothing where you selected.")
+                continue
+
+            if selected_piece.color == self.turn.opponent():
+                # 相手の駒を選んだときもエラー
+                printErr("[Error] The piece that you choice is not yours.")
+                continue
+
+            self.reachable_tiles = selected_piece.reachable(self, selected_piece, from_i, from_j)
+
+            if len(self.reachable_tiles) == 0:
+                # どこにも動かせない
+                printErr("[Error] The piece cannot move anywhere.")
+                continue
+
+            break
 
         self.render()
 
-        # 動かす駒を選ばせる
-        print("Please select piece: ", end="")
-        move_from = self.ask_place()
+        while True:
 
-        # 不正な入力だった場合
-        if move_from is None:
-            return False
+            # 移動先のマスを選ばせる
+            print(f"Please select where to move: ", end="")
+            move_to = self.ask_place()
 
-        from_i, from_j = move_from
-        selected_piece = self.get(from_i, from_j)
+            if move_to is None:
+                # 正しく入力されなかったらやり直し
+                continue
 
-        # 選ばれた座標に駒がないときはエラー
-        if selected_piece is None:
-            printErr("[Error] There is nothing where you selected.")
-            return False
+            to_i, to_j = move_to
 
-        print(f"You selected: {ansi.bold}{selected_piece.char}{ansi.reset}")
+            reachable_move_to = next((x for x in self.reachable_tiles.items() if x[0] == move_to), None)
 
-        # 相手の駒を選んだ場合もエラー
-        if selected_piece.color == self.turn.opponent():
-            printErr("[Error] The piece that you choice is not yours.")
-            return False
+            if not reachable_move_to:
+                # 入力された場所に行けない場合はエラー
+                printErr("[Error] You cannot move it there.")
+                continue
 
-        self.reachable_tiles = selected_piece.reachable(
-            self, selected_piece, from_i, from_j
-        )
+            reachable_move_to[1].side_effect(self)
 
-        # 動かせる先がない
-        if len(self.reachable_tiles) == 0:
-            printErr("[Error] The piece cannot move anywhere.")
-            return False
+            self.set(from_i, from_j, None)
+            self.set(to_i, to_j, selected_piece)
 
-        self.render()
+            selected_piece.moved = True
 
-        print(f"Please select where to move: ", end="")
-        move_to = self.ask_place()
-
-        if move_to is None:
-            return False
-
-        to_i, to_j = move_to
-
-        reachable_move_to = [x for x in self.reachable_tiles.items() if x[0] == move_to]
-
-        if len(reachable_move_to) == 0:
-            printErr("[Error] You cannot move it there.")
-            return False
-
-        reachable_move_to[0][1].side_effect(self)
-
-        self.set(from_i, from_j, None)
-        self.set(to_i, to_j, selected_piece)
-
-        selected_piece.moved = True
+            break
 
         print("")
 
-        return True
+        self.turn = self.turn.opponent() # ターンを反転
+        self.can_en_passant[self.turn] = None # アンパッサン可能駒を消去
+        self.reachable_tiles = {} # 到達可能駒を消去
 
-
-class Piece:
-
-    def __init__(
-        self,
-        char: str,
-        kind: Kind,
-        color: Color,
-        reachable: Callable[[Game, Piece, int, int], dict[tuple[int, int], ReachableResult]],
-    ):
-        self.char = char
-        self.kind = kind
-        self.color = color
-        self.reachable = reachable
-        self.moved = False
+    def play(self):
+        while True:
+            self.game_cycle()
 
 
 class ReachableResult:
@@ -456,47 +453,41 @@ def king_reachable(game: Game, self: Piece, i: int, j: int):
     return result
 
 
-char_to_piece: dict[
-    str,
-    tuple[Kind, Color, Callable[[Game, Piece, int, int], dict[tuple[int, int], ReachableResult]]],
-] = {
-    "P": (Kind.Pawn, Color.White, pawn_reachable(Color.White)),
-    "N": (Kind.Knight, Color.White, knight_reachable),
-    "B": (Kind.Bishop, Color.White, bishop_reachable),
-    "R": (Kind.Rook, Color.White, rook_reachable),
-    "Q": (Kind.Queen, Color.White, queen_reachable),
-    "K": (Kind.King, Color.White, king_reachable),
-    "p": (Kind.Pawn, Color.Black, pawn_reachable(Color.Black)),
-    "n": (Kind.Knight, Color.Black, knight_reachable),
-    "b": (Kind.Bishop, Color.Black, bishop_reachable),
-    "r": (Kind.Rook, Color.Black, rook_reachable),
-    "q": (Kind.Queen, Color.Black, queen_reachable),
-    "k": (Kind.King, Color.Black, king_reachable),
-}
+class Piece:
+    
+    char_to_piece: dict[
+        str,
+        tuple[
+            Color,
+            Kind,
+            Callable[[Game, Piece, int, int], dict[tuple[int, int], ReachableResult]],
+        ],
+    ] = {
+        "P": (Color.White, Kind.Pawn,   pawn_reachable(Color.White)),
+        "N": (Color.White, Kind.Knight, knight_reachable),
+        "B": (Color.White, Kind.Bishop, bishop_reachable),
+        "R": (Color.White, Kind.Rook,   rook_reachable),
+        "Q": (Color.White, Kind.Queen,  queen_reachable),
+        "K": (Color.White, Kind.King,   king_reachable),
+        "p": (Color.Black, Kind.Pawn,   pawn_reachable(Color.Black)),
+        "n": (Color.Black, Kind.Knight, knight_reachable),
+        "b": (Color.Black, Kind.Bishop, bishop_reachable),
+        "r": (Color.Black, Kind.Rook,   rook_reachable),
+        "q": (Color.Black, Kind.Queen,  queen_reachable),
+        "k": (Color.Black, Kind.King,   king_reachable),
+    }
+
+    def __init__(self, symbol: str):
+        self.symbol = symbol
+        self.color, self.kind, self.reachable = Piece.char_to_piece[symbol]
+        self.moved = False
+
 
 ansi = ANSI_SGR()
-
-game = Game("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
-
 
 def printErr(str: str):
     print(ansi.red + ansi.bold + str + ansi.reset)
 
+game = Game("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
 
-def cleanup():
-    print("\n" * 100)
-
-
-while True:
-
-    print(f"--- {ansi.bold}{game.turn.name}'s turn{ansi.reset} ---")
-
-    while True:
-        is_success = game.game_cycle()
-
-        if is_success:
-            break
-
-    game.turn = game.turn.opponent()
-
-    cleanup()
+game.play()
