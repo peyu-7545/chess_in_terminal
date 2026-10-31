@@ -460,11 +460,11 @@ game = Game("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
 def move_wrapped(move_from: str, move_to: str):
     game.move(lambda: Game.str_to_idx(move_from), lambda: Game.str_to_idx(move_to))
 
-move_wrapped("d2", "d4")
-move_wrapped("e7", "e5")
-move_wrapped("d4", "e5")
-move_wrapped("f7", "f5")
-move_wrapped("e5", "f6")
+# move_wrapped("d2", "d4")
+# move_wrapped("e7", "e5")
+# move_wrapped("d4", "e5")
+# move_wrapped("f7", "f5")
+# move_wrapped("e5", "f6")
 
 while True:
     game.game_cycle()
