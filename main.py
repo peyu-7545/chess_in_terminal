@@ -55,7 +55,7 @@ class Kind(Enum):
     Queen  = 5
     King   = 6
 
-class Vec2:
+class Vec:
     def __init__(self, i: int, j: int):
         self.i = i
         self.j = j
@@ -66,17 +66,17 @@ class Vec2:
     def is_out_board(self):
         return not self.is_in_board()
 
-    def __add__(self, other: Vec2):
-        return Vec2(self.i + other.i, self.j + other.j)
+    def __add__(self, other: Vec):
+        return Vec(self.i + other.i, self.j + other.j)
 
     def __rmul__(self, other: int):
-        return Vec2(other * self.i, other * self.j)
+        return Vec(other * self.i, other * self.j)
 
     def __hash__(self):
         return hash((self.i, self.j))
 
     def __eq__(self, other: Any):
-        if not isinstance(other, Vec2):
+        if not isinstance(other, Vec):
             return NotImplemented
 
         return self.i == other.i and self.j == other.j
@@ -110,28 +110,28 @@ class Game:
         self.turn = Color.White
 
         # Kingの位置
-        self.king_position: dict[Color, Vec2 | None] = {
+        self.king_position: dict[Color, Vec | None] = {
             Color.White: None,
             Color.Black: None,
         }
 
         # 直前に2マス動いたPawnの位置
-        self.can_en_passant: dict[Color, Vec2 | None] = {
+        self.can_en_passant: dict[Color, Vec | None] = {
             Color.White: None,
             Color.Black: None,
         }
 
         # 利いているマスの集合
-        self.covered: dict[Color, set[Vec2]] = {
+        self.covered: dict[Color, set[Vec]] = {
             Color.White: set(),
             Color.Black: set(),
         }
 
         for i in range(8):
             for j in range(8):
-                piece = self.get(Vec2(i, j))
+                piece = self.get(Vec(i, j))
                 if (piece is not None) and piece.kind == Kind.King:
-                    self.king_position[piece.color] = Vec2(i, j)
+                    self.king_position[piece.color] = Vec(i, j)
 
         self.update_covered()
 
@@ -141,16 +141,16 @@ class Game:
 
         for i in range(8):
             for j in range(8):
-                piece = self.get(Vec2(i, j))
+                piece = self.get(Vec(i, j))
                 if piece is None:
                     continue
-                for x in piece.reachable(self, piece, Vec2(i, j)):
+                for x in piece.reachable(self, piece, Vec(i, j)):
                     self.covered[piece.color].add(x.place)
 
-    def get(self, x: Vec2):
+    def get(self, x: Vec):
         return self.data[x.i][x.j]
 
-    def set(self, x: Vec2, y: Piece | None):
+    def set(self, x: Vec, y: Piece | None):
         self.data[x.i][x.j] = y
 
     def render(self):
@@ -166,7 +166,7 @@ class Game:
                 # マスの色は白と緑の市松模様
                 bg_color = ansi.bg_white if (i + j) % 2 == 0 else ansi.bg_green
 
-                piece = self.get(Vec2(i, j))
+                piece = self.get(Vec(i, j))
 
                 if piece is None:
                     char = " " if ansi.support_ansi else "."
@@ -191,9 +191,9 @@ class Game:
             if self.move(lambda: self.ask_place("Please select piece: "), lambda: self.ask_place("Please select where to move: ")):
                 break
 
-    def move(self, move_from_fn: Callable[[], Vec2 | None], move_to_fn: Callable[[], Vec2 | None]):
+    def move(self, get_move_from: Callable[[], Vec | None], get_move_to: Callable[[], Vec | None]):
 
-        if (move_from := move_from_fn()) is None:
+        if not (move_from := get_move_from()):
             return False
 
         selected_piece = self.get(move_from)
@@ -208,7 +208,7 @@ class Game:
             printErr("[Error] The piece you selected is not yours.")
             return False
 
-        if (move_to := move_to_fn()) is None:
+        if not (move_to := get_move_to()):
             return False
 
         reachable_tiles = selected_piece.reachable(self, selected_piece, move_from)
@@ -227,15 +227,15 @@ class Game:
         next_state.set(move_from, None)
         reachable_move_to.side_effect(next_state)
 
-        if (move_piece := next_state.get(move_to)) is not None:
-            move_piece.moved = True
+        if moved_piece := next_state.get(move_to):
+            moved_piece.moved = True
 
-            if move_piece.kind == Kind.King:
+            if moved_piece.kind == Kind.King:
                 next_state.king_position[next_state.turn] = move_to
 
         next_state.update_covered() # 利き範囲を更新
 
-        if next_state.king_position[next_state.turn] in next_state.covered[next_state.turn.opponent()]: # 後でKingがCheckされているかに置き換える
+        if next_state.is_covered(next_state.king_position[next_state.turn], next_state.turn.opponent()):
             # ターン終了時にKingがcheckされている
             printErr("[Error] You cannot place your king in check.")
             return False
@@ -245,6 +245,9 @@ class Game:
         self.can_en_passant[self.turn] = None
 
         return True
+
+    def is_covered(self, pos: Vec | None, by: Color):
+        return pos in self.covered[by]
 
     # ユーザーに標準入力からマスの座標を入力させる
     @staticmethod
@@ -271,11 +274,11 @@ class Game:
 
     @staticmethod
     def str_to_idx(coord: str):
-        return Vec2(8 - int(coord[1]), ord(coord[0]) - ord("a"))
+        return Vec(8 - int(coord[1]), ord(coord[0]) - ord("a"))
 
 
 class ReachableResult:
-    def __init__(self, place: Vec2, side_effect: Callable[[Game], None] = lambda _: None):
+    def __init__(self, place: Vec, side_effect: Callable[[Game], None] = lambda _: None):
         self.place = place
         self.side_effect = side_effect
 
@@ -283,17 +286,17 @@ class ReachableResult:
 def pawn_reachable(color: Color):
     forward = -1 if color == Color.White else 1
 
-    def _(game: Game, self: Piece, move_from: Vec2):
+    def _(game: Game, self: Piece, move_from: Vec):
         result: set[ReachableResult] = set()
 
         # 1マス進む
-        move_one = move_from + Vec2(forward, 0)
+        move_one = move_from + Vec(forward, 0)
 
         if move_one.is_in_board() and game.get(move_one) is None:
             result.add(ReachableResult(move_one))
 
             # 2マス進む
-            move_two = move_one + Vec2(forward, 0)
+            move_two = move_one + Vec(forward, 0)
 
             if not self.moved and move_two.is_in_board() and game.get(move_two) is None:
                 # En Passantフラグを立てる副作用
@@ -305,7 +308,7 @@ def pawn_reachable(color: Color):
 
         # 斜め前
         for dj in [-1, 1]:
-            move_to = move_from + Vec2(forward, dj)
+            move_to = move_from + Vec(forward, dj)
 
             if move_to.is_out_board():
                 continue
@@ -318,7 +321,7 @@ def pawn_reachable(color: Color):
 
         # En passant
         for dj in [-1, 1]:
-            move_pass = move_from + Vec2(0, dj)
+            move_pass = move_from + Vec(0, dj)
 
             if move_pass.is_out_board():
                 continue
@@ -328,7 +331,7 @@ def pawn_reachable(color: Color):
             if (target is not None) and target.color.is_opponent(self.color) and move_pass == game.can_en_passant[target.color]:
                 # 敵がいて、かつ敵が2マス動いた直後なら進める
 
-                move_to = move_from + Vec2(forward, dj)
+                move_to = move_from + Vec(forward, dj)
 
                 # 残像を取る副作用を追加
                 def capture_afterimage(game: Game):
@@ -341,11 +344,11 @@ def pawn_reachable(color: Color):
     return _
 
 
-def knight_reachable(game: Game, self: Piece, move_from: Vec2):
+def knight_reachable(game: Game, self: Piece, move_from: Vec):
     result: set[ReachableResult] = set()
 
     for d in [(-1, -2), (1, -2), (-2, -1), (2, -1), (-2, 1), (2, 1), (-1, 2), (1, 2)]:
-        move_to = move_from + Vec2(*d)
+        move_to = move_from + Vec(*d)
 
         if move_to.is_out_board():
             continue
@@ -359,12 +362,12 @@ def knight_reachable(game: Game, self: Piece, move_from: Vec2):
     return result
 
 
-def bishop_reachable(game: Game, self: Piece, move_from: Vec2):
+def bishop_reachable(game: Game, self: Piece, move_from: Vec):
     result: set[ReachableResult] = set()
 
     for d in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
         for scale in range(1, 8):
-            move_to = move_from + scale * Vec2(*d)
+            move_to = move_from + scale * Vec(*d)
 
             if move_to.is_out_board():
                 continue
@@ -382,12 +385,12 @@ def bishop_reachable(game: Game, self: Piece, move_from: Vec2):
     return result
 
 
-def rook_reachable(game: Game, self: Piece, move_from: Vec2):
+def rook_reachable(game: Game, self: Piece, move_from: Vec):
     result: set[ReachableResult] = set()
 
     for d in [(0, -1), (-1, 0), (1, 0), (0, 1)]:
         for scale in range(1, 8):
-            move_to = move_from + scale * Vec2(*d)
+            move_to = move_from + scale * Vec(*d)
 
             if move_to.is_out_board():
                 continue
@@ -405,12 +408,12 @@ def rook_reachable(game: Game, self: Piece, move_from: Vec2):
     return result
 
 
-def queen_reachable(game: Game, self: Piece, move_from: Vec2):
+def queen_reachable(game: Game, self: Piece, move_from: Vec):
     result: set[ReachableResult] = set()
 
     for d in [(-1, -1), (1, -1), (-1, 1), (1, 1), (0, -1), (-1, 0), (1, 0), (0, 1)]:
         for scale in range(1, 8):
-            move_to = move_from + scale * Vec2(*d)
+            move_to = move_from + scale * Vec(*d)
 
             if move_to.is_out_board():
                 continue
@@ -427,11 +430,11 @@ def queen_reachable(game: Game, self: Piece, move_from: Vec2):
     return result
 
 
-def king_reachable(game: Game, self: Piece, move_from: Vec2):
+def king_reachable(game: Game, self: Piece, move_from: Vec):
     result: set[ReachableResult] = set()
 
     for d in [(-1, -1), (1, -1), (-1, 1), (1, 1), (0, -1), (-1, 0), (1, 0), (0, 1)]:
-        move_to = move_from + Vec2(*d)
+        move_to = move_from + Vec(*d)
 
         if move_to.is_out_board():
             continue
@@ -441,6 +444,27 @@ def king_reachable(game: Game, self: Piece, move_from: Vec2):
         if (target is None) or self.color.is_opponent(target.color):
             result.add(ReachableResult(move_to))
 
+    # Castling
+    if not self.moved: # Kingが一度も動いていない
+        for dj, rook_j in [(-1, 0), (1, 7)]:
+
+            move_to = move_from + Vec(0, dj * 2)
+            rook_pos = Vec(move_from.i, rook_j)
+            rook = game.get(rook_pos)
+
+            # castlingできるか
+            if (
+                (rook is not None) and (rook.kind == Kind.Rook) and (not rook.moved) and # Rookが一度も動いていない
+                all(game.get(Vec(move_from.i, j)) is None for j in range(move_from.j + dj, rook_j, dj)) and # 間に駒がない
+                all(not game.is_covered(Vec(move_from.i, j), self.color.opponent()) for j in range(move_from.j, move_from.j + dj * 3, dj)) # 移動中に攻撃されていない
+            ):
+                def castling(game: Game):
+                    game.get(rook_pos).moved = True # type: ignore
+                    game.set(move_from + Vec(0, dj), game.get(rook_pos))
+                    game.set(rook_pos, None)
+
+                result.add(ReachableResult(move_to, castling))
+                
     return result
 
 class Piece:
@@ -451,7 +475,7 @@ class Piece:
 
     char_to_piece: dict[
         str,
-        tuple[Color, Kind, Callable[[Game, Piece, Vec2], set[ReachableResult]]],
+        tuple[Color, Kind, Callable[[Game, Piece, Vec], set[ReachableResult]]],
     ] = {
         "P": (Color.White, Kind.Pawn,   pawn_reachable(Color.White)),
         "N": (Color.White, Kind.Knight, knight_reachable),
@@ -472,19 +496,19 @@ ansi = ANSI_SGR()
 
 game = Game("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
 
-def move_wrapped(move_from: str, move_to: str):
-    game.move(lambda: Game.str_to_idx(move_from), lambda: Game.str_to_idx(move_to))
+# def move_wrapped(move_from: str, move_to: str):
+#     print(move_from + " -> " + move_to)
+#     game.move(lambda: Game.str_to_idx(move_from), lambda: Game.str_to_idx(move_to))
 
-# move_wrapped("d2", "d4")
+# move_wrapped("e2", "e4")
 # move_wrapped("e7", "e5")
-# move_wrapped("d4", "e5")
-# move_wrapped("f7", "f5")
-# move_wrapped("e5", "f6")
-# move_wrapped("e8", "e7")
-# move_wrapped("e8", "f7")
-# move_wrapped("d1", "d8")
-# move_wrapped("d1", "d5")
-# move_wrapped("a7", "a5")
+# move_wrapped("g1", "f3")
+# move_wrapped("d8", "g5")
+# move_wrapped("f1", "b5")
+# move_wrapped("d7", "d6")
+# move_wrapped("d7", "d5")
+# move_wrapped("g5", "g3")
+# move_wrapped("e1", "g1")
 
 while True:
     game.game_cycle()
