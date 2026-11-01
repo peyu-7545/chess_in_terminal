@@ -1,0 +1,38 @@
+Subjects:
+
+African capital 
+American capital 
+area-code state-region city 
+arithmetic answer 
+Asian capital 
+baby adult 
+Shakespeare-lines next work character 
+Chinese-year next 
+individuals collective 
+function ed-command 
+symbol number weight element 
+European capital 
+flowers meaning 
+greek english 
+inca successor 
+latin english 
+locomotive name 
+Middle-Earth capital 
+clear morse 
+multiplication answer 
+victim killer 
+poem-line next poem author 
+positive negative 
+president term vice successor 
+province capital 
+easy-sequence next name 
+hard-sequence next name 
+male female 
+sovereign century successor 
+state capital abbreviation flower 
+star trek 
+section Uniform-Criminal-Code 
+
+For example, "quiz victim killer" prints a victim's name and you reply
+with the killer, and "quiz killer victim" works the other way around.
+Type an empty line to get the correct answer.

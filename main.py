@@ -3,6 +3,7 @@ from collections.abc import Callable
 from enum import Enum
 import signal
 import sys
+import copy
 from typing import Any
 
 # Ctrl+Cが押されたら入力中でも強制終了する
@@ -71,14 +72,14 @@ class Vec2:
     def __rmul__(self, other: int):
         return Vec2(other * self.i, other * self.j)
 
+    def __hash__(self):
+        return hash((self.i, self.j))
+
     def __eq__(self, other: Any):
         if not isinstance(other, Vec2):
             return NotImplemented
 
         return self.i == other.i and self.j == other.j
-
-    def __hash__(self):
-        return hash((self.i, self.j))
 
 
 def FEN_to_array(fen: str):
@@ -105,12 +106,17 @@ class Game:
     # FEN形式の盤面を表す文字列を受け取ってゲームを初期化する
     def __init__(self, fen: str):
 
-        self.data = FEN_to_array(fen)
-
+        self.data = FEN_to_array(fen)        
         self.turn = Color.White
 
-        # 直前に2マス動いたPawn
-        self.can_en_passant: dict[Color, Piece | None] = {
+        # Kingの位置
+        self.king_position: dict[Color, Vec2 | None] = {
+            Color.White: None,
+            Color.Black: None,
+        }
+
+        # 直前に2マス動いたPawnの位置
+        self.can_en_passant: dict[Color, Vec2 | None] = {
             Color.White: None,
             Color.Black: None,
         }
@@ -120,6 +126,14 @@ class Game:
             Color.White: set(),
             Color.Black: set(),
         }
+
+        for i in range(8):
+            for j in range(8):
+                piece = self.get(Vec2(i, j))
+                if (piece is not None) and piece.kind == Kind.King:
+                    self.king_position[piece.color] = Vec2(i, j)
+
+        self.update_covered()
 
     def update_covered(self):
         self.covered[Color.White].clear()
@@ -174,22 +188,14 @@ class Game:
         self.render()
 
         while True:
-
-            def ask_move_from():
-                while (move_from := self.ask_place("Please select piece: ")) is None:
-                    pass
-                return move_from
-
-            def ask_move_to():
-                while (move_to := self.ask_place("Please select where to move: ")) is None:
-                    pass
-                return move_to
-
-            if self.move(ask_move_from, ask_move_to):
+            if self.move(lambda: self.ask_place("Please select piece: "), lambda: self.ask_place("Please select where to move: ")):
                 break
 
-    def move(self, move_from_fn: Callable[[], Vec2], move_to_fn: Callable[[], Vec2]):
-        move_from = move_from_fn()
+    def move(self, move_from_fn: Callable[[], Vec2 | None], move_to_fn: Callable[[], Vec2 | None]):
+
+        if (move_from := move_from_fn()) is None:
+            return False
+
         selected_piece = self.get(move_from)
 
         if selected_piece is None:
@@ -202,7 +208,9 @@ class Game:
             printErr("[Error] The piece you selected is not yours.")
             return False
 
-        move_to = move_to_fn()
+        if (move_to := move_to_fn()) is None:
+            return False
+
         reachable_tiles = selected_piece.reachable(self, selected_piece, move_from)
 
         # reachable_tilesの中からmove_toを探す(なければNone)
@@ -212,16 +220,29 @@ class Game:
             # 選ばれた場所に行けない
             printErr("[Error] You cannot move it there.")
             return False
+
+        next_state = copy.deepcopy(self)
         
-        self.set(move_to, self.get(move_from))
-        self.set(move_from, None)
-        reachable_move_to.side_effect(self)
+        next_state.set(move_to, next_state.get(move_from))
+        next_state.set(move_from, None)
+        reachable_move_to.side_effect(next_state)
 
-        if (moved_piece := self.get(move_to)) is not None:
-            moved_piece.moved = True
+        if (move_piece := next_state.get(move_to)) is not None:
+            move_piece.moved = True
 
-        self.turn = self.turn.opponent() # ターンを反転
-        self.can_en_passant[self.turn] = None # アンパッサン可能駒を消去
+            if move_piece.kind == Kind.King:
+                next_state.king_position[next_state.turn] = move_to
+
+        next_state.update_covered() # 利き範囲を更新
+
+        if next_state.king_position[next_state.turn] in next_state.covered[next_state.turn.opponent()]: # 後でKingがCheckされているかに置き換える
+            # ターン終了時にKingがcheckされている
+            printErr("[Error] You cannot place your king in check.")
+            return False
+
+        self.__dict__.update(next_state.__dict__)
+        self.turn = self.turn.opponent()
+        self.can_en_passant[self.turn] = None
 
         return True
 
@@ -230,12 +251,8 @@ class Game:
     def ask_place(msg: str):
         input_str = input(msg) # input_str: [file, rank]
 
-        # デバッグ用
-        if input_str == "exit":
-            exit(1)
-
         if len(input_str) != 2:
-            print("[Error] You must input just 2 letters.")
+            printErr("[Error] You must input just 2 letters.")
             return None
 
         ok = True
@@ -282,7 +299,7 @@ def pawn_reachable(color: Color):
                 # En Passantフラグを立てる副作用
                 # lambdaの中でプロパティに代入することはできない
                 def set_flag(game: Game):
-                    game.can_en_passant[self.color] = self
+                    game.can_en_passant[self.color] = move_two
 
                 result.add(ReachableResult(move_two, set_flag))
 
@@ -308,7 +325,7 @@ def pawn_reachable(color: Color):
 
             target = game.get(move_pass)
 
-            if (target is not None) and target.color.is_opponent(self.color) and target == game.can_en_passant[target.color]:
+            if (target is not None) and target.color.is_opponent(self.color) and move_pass == game.can_en_passant[target.color]:
                 # 敵がいて、かつ敵が2マス動いた直後なら進める
 
                 move_to = move_from + Vec2(forward, dj)
@@ -422,11 +439,9 @@ def king_reachable(game: Game, self: Piece, move_from: Vec2):
         target = game.get(move_to)
 
         if (target is None) or self.color.is_opponent(target.color):
-
             result.add(ReachableResult(move_to))
 
     return result
-
 
 class Piece:
     def __init__(self, symbol: str):
@@ -465,9 +480,11 @@ def move_wrapped(move_from: str, move_to: str):
 # move_wrapped("d4", "e5")
 # move_wrapped("f7", "f5")
 # move_wrapped("e5", "f6")
+# move_wrapped("e8", "e7")
+# move_wrapped("e8", "f7")
+# move_wrapped("d1", "d8")
+# move_wrapped("d1", "d5")
+# move_wrapped("a7", "a5")
 
 while True:
     game.game_cycle()
-
-# 移動と副作用を適用したターン終了時にkingがcoveredにいてははならない
-# rollbackはどう実装する？
