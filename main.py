@@ -9,7 +9,6 @@ from typing import Any
 # Ctrl+Cが押されたら入力中でも強制終了する
 signal.signal(signal.SIGINT, lambda _signum, _frame: sys.exit(0))
 
-
 # ANSI escape sequenceを直感的に扱うためのクラス
 # ターミナルがANSIに対応していない場合は何もしない
 class ANSI_SGR:
@@ -35,7 +34,6 @@ class ANSI_SGR:
 def printErr(err: str):
     print(ansi.red + ansi.bold + err + ansi.reset)
 
-
 class Color(Enum):
     White = 1
     Black = 2
@@ -45,7 +43,6 @@ class Color(Enum):
 
     def is_opponent(self, other: Color):
         return self != other
-
 
 class Kind(Enum):
     Pawn   = 1
@@ -111,8 +108,8 @@ class Game:
 
         # Kingの位置
         self.king_position: dict[Color, Vec | None] = {
-            Color.White: None,
-            Color.Black: None,
+            Color.White: Vec(7, 4),
+            Color.Black: Vec(0, 4),
         }
 
         # 直前に2マス動いたPawnの位置
@@ -127,12 +124,6 @@ class Game:
             Color.Black: set(),
         }
 
-        for i in range(8):
-            for j in range(8):
-                piece = self.get(Vec(i, j))
-                if (piece is not None) and piece.kind == Kind.King:
-                    self.king_position[piece.color] = Vec(i, j)
-
         self.update_covered()
 
     def update_covered(self):
@@ -142,10 +133,11 @@ class Game:
         for i in range(8):
             for j in range(8):
                 piece = self.get(Vec(i, j))
-                if piece is None:
-                    continue
-                for x in piece.reachable(self, piece, Vec(i, j)):
-                    self.covered[piece.color].add(x.place)
+
+                if piece:
+                    # この駒から到達可能なマスを追加
+                    for x in piece.reachable(self, piece, Vec(i, j)):
+                        self.covered[piece.color].add(x.place)
 
     def get(self, x: Vec):
         return self.data[x.i][x.j]
@@ -168,10 +160,10 @@ class Game:
 
                 piece = self.get(Vec(i, j))
 
-                if piece is None:
-                    char = " " if ansi.support_ansi else "."
-                else:
+                if piece:
                     char = piece.symbol
+                else:
+                    char = " " if ansi.support_ansi else "."
 
                 print(bg_color + ansi.bold + char + ansi.reset, end="")
 
@@ -198,7 +190,7 @@ class Game:
 
         selected_piece = self.get(move_from)
 
-        if selected_piece is None:
+        if not selected_piece:
             # 選んだ場所に何もなかった
             printErr("[Error] There is nothing where you selected.")
             return False
@@ -216,7 +208,7 @@ class Game:
         # reachable_tilesの中からmove_toを探す(なければNone)
         reachable_move_to = next((x for x in reachable_tiles if x.place == move_to), None)
 
-        if reachable_move_to is None:
+        if not reachable_move_to:
             # 選ばれた場所に行けない
             printErr("[Error] You cannot move it there.")
             return False
@@ -292,52 +284,39 @@ def pawn_reachable(color: Color):
         # 1マス進む
         move_one = move_from + Vec(forward, 0)
 
-        if move_one.is_in_board() and game.get(move_one) is None:
+        if move_one.is_in_board() and (not game.get(move_one)):
             result.add(ReachableResult(move_one))
 
             # 2マス進む
             move_two = move_one + Vec(forward, 0)
 
-            if not self.moved and move_two.is_in_board() and game.get(move_two) is None:
-                # En Passantフラグを立てる副作用
-                # lambdaの中でプロパティに代入することはできない
+            if (not self.moved) and move_two.is_in_board() and (not game.get(move_two)):
+                # 一度も動いていなく、1マス先と2マス先に何もないとき
+
                 def set_flag(game: Game):
+                    # En passantされるフラグを立てる
                     game.can_en_passant[self.color] = move_two
 
                 result.add(ReachableResult(move_two, set_flag))
 
         # 斜め前
         for dj in [-1, 1]:
+            move_pass = move_from + Vec(0, dj)
             move_to = move_from + Vec(forward, dj)
 
-            if move_to.is_out_board():
-                continue
+            if move_to.is_in_board():
+                if (target := game.get(move_to)) and target.color.is_opponent(self.color):
+                    # 斜め前に相手の駒があるとき
+                    result.add(ReachableResult(move_to))
 
-            target = game.get(move_to)
+                if (target := game.get(move_pass)) and target.color.is_opponent(self.color) and move_pass == game.can_en_passant[target.color]:
+                    # 横にEn passant可能な相手の駒があるとき
 
-            if (target is not None) and target.color.is_opponent(self.color):
-                # 敵がいるなら進める
-                result.add(ReachableResult(move_to))
+                    def capture_afterimage(game: Game):
+                        # 残像を取る
+                        game.set(move_pass, None)
 
-        # En passant
-        for dj in [-1, 1]:
-            move_pass = move_from + Vec(0, dj)
-
-            if move_pass.is_out_board():
-                continue
-
-            target = game.get(move_pass)
-
-            if (target is not None) and target.color.is_opponent(self.color) and move_pass == game.can_en_passant[target.color]:
-                # 敵がいて、かつ敵が2マス動いた直後なら進める
-
-                move_to = move_from + Vec(forward, dj)
-
-                # 残像を取る副作用を追加
-                def capture_afterimage(game: Game):
-                    game.set(move_pass, None)
-
-                result.add(ReachableResult(move_to, capture_afterimage))
+                    result.add(ReachableResult(move_to, capture_afterimage))
 
         return result
 
@@ -355,8 +334,8 @@ def knight_reachable(game: Game, self: Piece, move_from: Vec):
 
         target = game.get(move_to)
 
-        if target is None or self.color.is_opponent(target.color):
-            # 何もないか、敵がいるなら進める
+        if not target or self.color.is_opponent(target.color):
+            # 何もないか、相手の駒があるとき
             result.add(ReachableResult(move_to))
 
     return result
@@ -374,12 +353,12 @@ def bishop_reachable(game: Game, self: Piece, move_from: Vec):
 
             target = game.get(move_to)
 
-            if (target is None) or target.color.is_opponent(self.color):
-                # 何もないか, 敵がいるなら進める
+            if not target or target.color.is_opponent(self.color):
+                # 何もないか、相手の駒があるとき
                 result.add(ReachableResult(move_to))
 
-            if target is not None:
-                # 敵か味方がいるなら進めない
+            if target:
+                # 何か駒があるならそれ以上進めない
                 break
 
     return result
@@ -397,12 +376,12 @@ def rook_reachable(game: Game, self: Piece, move_from: Vec):
 
             target = game.get(move_to)
 
-            if (target is None) or target.color.is_opponent(self.color):
-                # 何もないか, 敵がいるなら進める
+            if not target or target.color.is_opponent(self.color):
+                # 何もないか、相手の駒があるとき
                 result.add(ReachableResult(move_to))
 
-            if target is not None:
-                # 敵か味方がいるなら進めない
+            if target:
+                # 何か駒があるならそれ以上進めない
                 break
 
     return result
@@ -420,13 +399,14 @@ def queen_reachable(game: Game, self: Piece, move_from: Vec):
 
             target = game.get(move_to)
 
-            if (target is None) or target.color.is_opponent(self.color):
-                # 何もないか, 敵がいるなら進める
+            if not target or target.color.is_opponent(self.color):
+                # 何もないか、相手の駒があるとき
                 result.add(ReachableResult(move_to))
 
-            if target is not None:
-                # 敵か味方がいるならそれ以上進めない
+            if target:
+                # 何か駒があるならそれ以上進めない
                 break
+
     return result
 
 
@@ -441,36 +421,37 @@ def king_reachable(game: Game, self: Piece, move_from: Vec):
 
         target = game.get(move_to)
 
-        if (target is None) or self.color.is_opponent(target.color):
+        if not target or self.color.is_opponent(target.color):
+            # 何もないか、相手の駒があるとき
             result.add(ReachableResult(move_to))
 
     # Castling
-    if not self.moved: # Kingが一度も動いていない
-        for dj, rook_j in [(-1, 0), (1, 7)]:
+    for dj, rook_j in [(-1, 0), (1, 7)]:
 
-            move_to = move_from + Vec(0, dj * 2)
-            rook_pos = Vec(move_from.i, rook_j)
-            rook = game.get(rook_pos)
+        move_to = move_from + Vec(0, dj * 2)
+        rook_pos = Vec(move_from.i, rook_j)
+        rook = game.get(rook_pos)
 
-            # castlingできるか
-            if (
-                (rook is not None) and (rook.kind == Kind.Rook) and (not rook.moved) and # Rookが一度も動いていない
-                all(game.get(Vec(move_from.i, j)) is None for j in range(move_from.j + dj, rook_j, dj)) and # 間に駒がない
-                all(not game.is_covered(Vec(move_from.i, j), self.color.opponent()) for j in range(move_from.j, move_from.j + dj * 3, dj)) # 移動中に攻撃されていない
-            ):
-                def castling(game: Game):
-                    game.get(rook_pos).moved = True # type: ignore
-                    game.set(move_from + Vec(0, dj), game.get(rook_pos))
-                    game.set(rook_pos, None)
+        # castlingできるか
+        if (
+            not self.moved and # Kingが一度も動いていない
+            rook and (rook.kind == Kind.Rook) and (not rook.moved) and # Rookが一度も動いていない
+            all(not game.get(Vec(move_from.i, j)) for j in range(move_from.j + dj, rook_j, dj)) and # 間に駒がない
+            all(not game.is_covered(Vec(move_from.i, j), self.color.opponent()) for j in range(move_from.j, move_from.j + dj * 3, dj)) # 移動中に攻撃されない
+        ):
+            def castling(game: Game):
+                game.get(rook_pos).moved = True # type: ignore
+                game.set(move_from + Vec(0, dj), game.get(rook_pos))
+                game.set(rook_pos, None)
 
-                result.add(ReachableResult(move_to, castling))
+            result.add(ReachableResult(move_to, castling))
                 
     return result
 
 class Piece:
     def __init__(self, symbol: str):
-        self.symbol = symbol
         self.color, self.kind, self.reachable = Piece.char_to_piece[symbol]
+        self.symbol = symbol
         self.moved = False
 
     char_to_piece: dict[
@@ -491,7 +472,6 @@ class Piece:
         "k": (Color.Black, Kind.King,   king_reachable),
     }
 
-
 ansi = ANSI_SGR()
 
 game = Game("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
@@ -505,9 +485,7 @@ game = Game("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
 # move_wrapped("g1", "f3")
 # move_wrapped("d8", "g5")
 # move_wrapped("f1", "b5")
-# move_wrapped("d7", "d6")
-# move_wrapped("d7", "d5")
-# move_wrapped("g5", "g3")
+# move_wrapped("g5", "g1")
 # move_wrapped("e1", "g1")
 
 while True:
