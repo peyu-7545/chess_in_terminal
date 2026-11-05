@@ -16,12 +16,8 @@
 - [x] En Passant
 - [x] Promotion
 - [x] Checkされているときの動作
-- [ ] 勝敗判定
+- [x] 勝敗判定
 - [x] 移動の始点と終点を入力するスタイル
 - [ ] 代数的記法(棋譜のアレ)で入力するスタイル
 - [ ] 対戦(2人プレイ)
 - [ ] 対戦(vs AI)
-
-## 勝敗判定
-
-Insufficient Material, Threefold Repetitionは強制引き分けなので実装する
