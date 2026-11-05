@@ -99,6 +99,23 @@ def FEN_to_array(fen: str):
 
     return result
 
+def ask_place(msg: str):
+    input_str = input(msg)
+
+    if len(input_str) != 2:
+        printErr("You must input just 2 letters.")
+        return None
+
+    if not (ord("a") <= ord(input_str[0]) <= ord("h")):
+        printErr("The file must be a lower case alphabet between a and h.")
+        return None
+
+    if not (input_str[1].isdigit() and 1 <= int(input_str[1]) <= 8):
+        printErr("The rank must be an integer between 1 and 8.")
+        return None
+
+    return Vec.from_str(input_str)
+
 class Game:
     def __init__(self):
 
@@ -174,8 +191,8 @@ class Game:
         print(f"\n--- {ansi.bold}{self.turn.name}{ansi.reset}'s turn ---")
         self.render_board()
 
-        get_move_from = lambda: self.ask_place("Please select piece: ")
-        get_move_to   = lambda: self.ask_place("Please select where to move: ")
+        get_move_from = lambda: ask_place("Please select piece: ")
+        get_move_to   = lambda: ask_place("Please select where to move: ")
 
         while True:
             if self.move(get_move_from, get_move_to):
@@ -204,7 +221,7 @@ class Game:
             printErr("You cannot move it there.")
             return False
         
-        if not (next_state := self.simulate_move(reachable_move_to)):
+        if not (next_state := self.simulate_move(reachable_move_to, True)):
             printErr("You cannot place your king in check.")
             return False
 
@@ -222,7 +239,7 @@ class Game:
 
                 if piece and piece.color == self.turn:
                     for move in piece.reachable(self, piece, Vec(i, j)):   
-                        if self.simulate_move(move):
+                        if self.simulate_move(move, False):
                             has_legal_move = True
 
         if not has_legal_move:
@@ -240,11 +257,11 @@ class Game:
 
     # コピーした盤面で動きをシミュレートする
     # 動いた後にCheckされていなければその盤面を返す
-    def simulate_move(self, move: Move):
+    def simulate_move(self, move: Move, io: bool):
         parallel = copy.deepcopy(self)
         parallel.set(move.to_, parallel.get(move.from_))
         parallel.set(move.from_, None)
-        move.action(parallel)
+        move.action(parallel, io)
 
         moved_piece = parallel.get(move.to_)
         assert moved_piece is not None
@@ -260,29 +277,9 @@ class Game:
             return None
 
         return parallel
-
-    @staticmethod
-    def ask_place(msg: str):
-        input_str = input(msg)
-
-        if len(input_str) != 2:
-            printErr("You must input just 2 letters.")
-            return None
-
-        ok = True
-
-        if not (ord("a") <= ord(input_str[0]) <= ord("h")):
-            printErr("The file must be a lower case alphabet between a and h.")
-            ok = False
-
-        if not (input_str[1].isdigit() and 1 <= int(input_str[1]) <= 8):
-            printErr("The rank must be an integer between 1 and 8.")
-            ok = False
-
-        return Vec.from_str(input_str) if ok else None
     
 class Move:
-    def __init__(self, from_: Vec, to_: Vec, action: Callable[[Game], None] = lambda _: None):
+    def __init__(self, from_: Vec, to_: Vec, action: Callable[[Game, bool], None] = lambda _1, _b: None):
         self.from_ = from_
         self.to_ = to_
         self.action = action
@@ -292,7 +289,10 @@ def pawn_reachable(color: Color):
     promotion_line = 0 if color == Color.White else 7
 
     def promotion(pos: Vec):
-        def _(game: Game):
+        def _(game: Game, io: bool):
+            if not io:
+                return
+            
             while True:
                 piece = input("Please select which piece you want to promote from N,B,R,Q: ")
 
@@ -325,7 +325,7 @@ def pawn_reachable(color: Color):
             if (not self.moved) and move_two.is_in_board() and (not game.get(move_two)):
                 # 一度も動いていなく、1マス先と2マス先に何もないとき
 
-                def set_flag(game: Game):
+                def set_flag(game: Game, _: bool):
                     game.can_en_passant[self.color] = move_two
 
                 result.add(Move(from_, move_two, set_flag))
@@ -346,7 +346,7 @@ def pawn_reachable(color: Color):
                 if (target := game.get(move_pass)) and target.color.is_opponent(self.color) and move_pass == game.can_en_passant[target.color]:
                     # 横にEn passant可能な相手の駒があるとき
 
-                    def en_passant(game: Game):
+                    def en_passant(game: Game, _: bool):
                         game.set(move_pass, None)
 
                     result.add(Move(from_, to_, en_passant))
@@ -458,7 +458,7 @@ def king_reachable(game: Game, self: Piece, from_: Vec):
             all(not game.get(Vec(from_.i, j)) for j in range(from_.j + dj, rook_j, dj)) and # 間に駒がない
             all(not game.is_covered(Vec(from_.i, j), self.color.opponent()) for j in range(from_.j, from_.j + dj * 3, dj)) # 移動中に攻撃されない
         ):
-            def castling(game: Game):
+            def castling(game: Game, _: bool):
                 game.get(rook_pos).moved = True # type: ignore
                 game.set(from_ + Vec(0, dj), game.get(rook_pos))
                 game.set(rook_pos, None)
