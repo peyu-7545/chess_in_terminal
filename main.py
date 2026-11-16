@@ -103,14 +103,13 @@ def FEN_to_array(fen: str):
 def ask_place(msg: str):
     input_str = input(ansi.bold + msg + ansi.reset)
 
-    if (len(input_str) != 2 or 
-        not (ord("a") <= ord(input_str[0]) <= ord("h")) or 
-        not (input_str[1].isdigit() and 1 <= int(input_str[1]) <= 8)
+    if (len(input_str) == 2 and
+        ord("a") <= ord(input_str[0]) <= ord("h") and
+        ord("1") <= ord(input_str[1]) <= ord("8")
     ):
-        printErr("Wrong input")
-        return None
+        return Vec.from_str(input_str)
 
-    return Vec.from_str(input_str)
+    return None
 
 class Game:
     def __init__(self):
@@ -138,9 +137,9 @@ class Game:
 
         self.status: Status = Status.Playing
 
-        self.update_covered()
+        self.calc_covered_tiles()
 
-    def update_covered(self):
+    def calc_covered_tiles(self):
         self.covered[Color.White].clear()
         self.covered[Color.Black].clear()
 
@@ -152,6 +151,22 @@ class Game:
                     # この駒から到達可能なマスを追加
                     for x in piece.reachable(self, Vec(i, j)):
                         self.covered[piece.color].add(x.to_)
+
+    def update_turn(self, next_turn: Game):
+        current_turn = self.turn
+        current_enemy = self.turn.enemy()
+
+        self.__dict__.update(next_turn.__dict__)
+        self.turn = current_enemy
+        self.can_en_passant[current_enemy] = None
+
+        enemy_checked = self.is_covered(self.king_position[current_enemy], current_turn)
+
+        if len(self.get_all_legal_moves(current_enemy)) == 0:
+            if enemy_checked:
+                self.status = Status.Checkmate
+            else:
+                self.status = Status.Stalemate
 
     def get(self, x: Vec):
         return self.data[x.i][x.j]
@@ -179,14 +194,14 @@ class Game:
         if moved_piece.kind == Kind.King:
             parallel.king_position[parallel.turn] = move.to_
 
-        parallel.update_covered()
+        parallel.calc_covered_tiles()
 
         if parallel.is_covered(parallel.king_position[parallel.turn], parallel.turn.enemy()):
             return None
 
         return parallel
 
-    def get_legal_moves(self, color: Color):
+    def get_all_legal_moves(self, color: Color):
         legal_moves: list[tuple[Move, Game]] = []
 
         for i in range(8):
@@ -194,8 +209,8 @@ class Game:
                 piece = self.get(Vec(i, j))
 
                 if piece and piece.color == color:
-                    for move in piece.reachable(game, Vec(i, j)):
-                        if (next := game.test_move(move)):
+                    for move in piece.reachable(self, Vec(i, j)):
+                        if (next := self.test_move(move)):
                             legal_moves.append((move, next))
 
         return legal_moves
@@ -206,12 +221,18 @@ class Action:
 
     def do(self, game: Game):
         pass
+
+    def __str__(self) -> str:
+        return ""
     
 class Move:
     def __init__(self, from_: Vec, to_: Vec, action: Action = Action()):
         self.from_  = from_
         self.to_    = to_
         self.action = action
+
+    def __str__(self):
+        return f"{self.from_} -> {self.to_} {self.action}"
 
 class Piece:
     def __init__(self, symbol: str):
@@ -248,7 +269,7 @@ class Piece:
 
             forward      =     -1 if self.color == Color.White else 1
             promote_line =      0 if self.color == Color.White else 7
-            promote_opt  = "KBRQ" if self.color == Color.White else "kbrq"
+            promote_opt  = "NBRQ" if self.color == Color.White else "nbrq"
 
             m1 = from_ + Vec(forward, 0)
 
@@ -357,6 +378,9 @@ class Promote(Action):
         x.moved = True
         game.set(self.pos, x)
 
+    def __str__(self):
+        return f"Promote to {self.to_}"
+
 class SetEnpassantFlag(Action):
     def __init__(self, pos: Vec, color: Color):
         self.pos   = pos
@@ -365,12 +389,18 @@ class SetEnpassantFlag(Action):
     def do(self, game: Game):
         game.can_en_passant[self.color] = self.pos
 
+    def __str__(self):
+        return "Set Enpassant Flag"
+
 class Enpassant(Action):
     def __init__(self, pos: Vec):
         self.pos = pos
 
     def do(self, game: Game):
         game.set(self.pos, None)
+
+    def __str__(self):
+        return "Enpassant"
 
 class Castling(Action):
     def __init__(self, rook_from: Vec, rook_to: Vec):
@@ -384,6 +414,9 @@ class Castling(Action):
         x = game.get(self.rook_to)
         assert x is not None
         x.moved = True
+
+    def __str__(self):
+        return "Castling"
 
 game = Game()
 
@@ -421,28 +454,36 @@ def humanTurn(game: Game):
     print(f"\n {ansi.bold}{game.turn.name}{ansi.reset}'s turn \n")
     render(game.data)
 
+    # Debug Info (消す)
+    for x in game.get_all_legal_moves(game.turn):
+        print(x[0])
+
     while True:
-        
-        legal_moves = game.get_legal_moves(game.turn)
+
+        legal_moves = game.get_all_legal_moves(game.turn)
 
         if (from_ := ask_place("from: ")) is None:
+            printErr("Wrong Input")
             continue
 
+        # 入力された座標に駒がないか、相手の駒だったとき
         if (selected := game.get(from_)) is None or selected.color.is_enemy(game.turn):
-            printErr("There is not your piece.")
+            printErr("There is not your piece")
             continue
 
         if (to_ := ask_place("to: ")) is None:
+            printErr("Wrong Input")
             continue
 
+        # 合法手のうち、入力された移動前と移動後に一致するものだけ取り出す
         legal_moves = [x for x in legal_moves if x[0].from_ == from_ and x[0].to_ == to_]
 
         if len(legal_moves) == 0:
-            printErr("You cannot move it there.")
+            printErr("You cannot move it there")
             continue
 
         if can_promote(to_, selected.color, selected.kind):
-            opt = ["N", "B", "R", "Q"] if game.turn == Color.White else ["n", "b", "r", "q"]
+            opt = ("N", "B", "R", "Q") if game.turn == Color.White else ("n", "b", "r", "q")
             char = input(f"Promote to: ")
 
             if char not in opt:
@@ -451,19 +492,17 @@ def humanTurn(game: Game):
 
             legal_moves = [x for x in legal_moves if x[0].action.to_ == char] # type: ignore
 
-        game.__dict__.update(legal_moves[0][1].__dict__)
-        game.turn = game.turn.enemy()
-        game.can_en_passant[game.turn] = None
+        assert len(legal_moves) == 1, "[Bug] 合法手が一通りに定まっていない"
 
-        is_checked = game.is_covered(game.king_position[game.turn], game.turn.enemy())
-
-        if len(game.get_legal_moves(game.turn)) == 0:
-            if is_checked:
-                game.status = Status.Checkmate
-            else:
-                game.status = Status.Stalemate
-
+        game.update_turn(legal_moves[0][1])
         break
 
 while game.status == Status.Playing:
     humanTurn(game)
+
+# TODO
+# [x] 人間の入力とゲーム内の処理の分離
+# [ ] ファイルにゲームの進行を保持(Shortcutで動かすため)
+# [ ] MoveとGame(移動後の盤面)は一体化させていいのか？
+# [ ] tuple[Move, Game]に対してindexでアクセスすると可読性が悪そう
+# [ ] can_en_passantって常に白黒のどちらかだけ？ FENを見る限り多分そう
