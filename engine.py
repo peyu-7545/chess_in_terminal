@@ -58,24 +58,6 @@ class Status(Enum):
     Checkmate = 1
     Stalemate = 2
 
-# TODO: Gameのstaticmethodに移す & FEN の全てのデータを使う
-def FEN_to_array(fen: str):
-    result: list[list[Piece | None]] = [[None] * 8 for _ in range(8)]
-
-    for i, line in enumerate(fen.split("/")):
-        j = 0
-
-        for char in line:
-            if char.isdigit():
-                # 連続する空マスはその長さで表される
-                j += int(char)
-            else:
-                # 駒があるマスはアルファベットで表される
-                result[i][j] = Piece(char)
-                j += 1
-
-    return result
-
 class Action:
     def __init__(self):
         pass
@@ -93,7 +75,6 @@ class Promote(Action):
 
     def do(self, game: Game):
         x = Piece(self.to_)
-        x.moved = True
         game.set(self.pos, x)
 
     def __str__(self):
@@ -105,7 +86,7 @@ class SetEnpassantFlag(Action):
         self.color = color
 
     def do(self, game: Game):
-        game.can_en_passant[self.color] = self.pos
+        game.enpassant_target[self.color] = self.pos
 
     def __str__(self):
         return "Set Enpassant Flag"
@@ -129,10 +110,6 @@ class Castling(Action):
         game.set(self.rook_to, game.get(self.rook_from))
         game.set(self.rook_from, None)
 
-        x = game.get(self.rook_to)
-        assert x is not None
-        x.moved = True
-
     def __str__(self):
         return "Castling"
     
@@ -149,7 +126,6 @@ class Piece:
     def __init__(self, symbol: str):
         self.color, self.kind = Piece.char_to_piece[symbol]
         self.symbol = symbol
-        self.moved = False
 
     char_to_piece: dict[
         str,
@@ -179,6 +155,7 @@ class Piece:
             # Pawn
 
             forward      =     -1 if self.color == Color.White else 1
+            begin_line   =      6 if self.color == Color.White else 1
             promote_line =      0 if self.color == Color.White else 7
             promote_opt  = "NBRQ" if self.color == Color.White else "nbrq"
 
@@ -191,11 +168,11 @@ class Piece:
                 else:
                     result.add(Move(from_, m1))
 
-                if not self.moved:
+                if from_.i == begin_line:
                     m2 = from_ + Vec(2 * forward, 0)
 
                     if m2.is_in() and game.get(m2) is None:
-                        # 前提: 2マス進むのと昇格は同時に起こらない
+                        # 2マス進むのと昇格は同時に起こらない
                         result.add(Move(from_, m2, SetEnpassantFlag(m2, self.color)))
 
             for dj in -1, 1:
@@ -211,7 +188,7 @@ class Piece:
                         else:
                             result.add(Move(from_, to_))
 
-                    if (target := game.get(pass_)) and target.is_enemy(self) and pass_ == game.can_en_passant[target.color]:
+                    if (target := game.get(pass_)) and target.is_enemy(self) and pass_ == game.enpassant_target[target.color]:
                         # 横にEn passant可能な駒がいるなら斜め前に移動しながら取れる
                         result.add(Move(from_, to_, Enpassant(pass_)))
 
@@ -263,39 +240,65 @@ class Piece:
                     if target is None or target.is_enemy(self):
                         result.add(Move(from_, to_))
 
-            for dj, rook_j in (-1, 0), (1, 7):
-                to_ = from_ + Vec(0, dj * 2)
-                rook_pos = Vec(from_.i, rook_j)
-                rook = game.get(rook_pos)
+            for rook_pos, dj in ((Vec(from_.i, 0), -1), (Vec(from_.i, 7), 1)):
+                if rook_pos in game.can_castle_rooks:
+                    to_ = from_ + Vec(0, dj * 2)
 
-                # Castlingできるか判定
-                if (
-                    not self.moved and # Kingが一度も動いていない
-                    rook and rook.kind == Kind.Rook and not rook.moved and # Rookが一度も動いていない
-                    all(game.get(Vec(from_.i, j)) is None for j in range(from_.j + dj, rook_j, dj)) and # 間に駒がない
-                    all(not game.is_covered(Vec(from_.i, j), self.color.enemy()) for j in range(from_.j, from_.j + dj * 3, dj)) # 移動中に攻撃されない
-                ):
-                    result.add(Move(from_, to_, Castling(rook_pos, from_ + Vec(0, dj))))
+                    if (
+                        all(game.get(Vec(from_.i, j)) is None for j in range(from_.j + dj, rook_pos.j, dj)) and # あいだに駒がない
+                        all(not game.is_covered(Vec(from_.i, j), self.color.enemy()) for j in range(from_.j, from_.j + dj * 3, dj)) # kingの移動中に攻撃されない
+                    ):
+                        # Castlingできる
+                        result.add(Move(from_, to_, Castling(rook_pos, from_ + Vec(0, dj))))
 
         return result
 
 class Game:
-    def __init__(self):
+    def __init__(self, fen: str):
 
-        self.data = FEN_to_array("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")        
-        self.turn = Color.White
+        fen_data = fen.split(" ")
 
-        # Kingの位置
-        self.king_position: dict[Color, Vec] = {
-            Color.White: Vec(7, 4),
-            Color.Black: Vec(0, 4),
-        }
+        self.data: list[list[Piece | None]] = [[None] * 8 for _ in range(8)]
+        self.king_position: dict[Color, Vec] = dict()
+        self.can_castle_rooks: set[Vec] = set()
+        self.enpassant_target: dict[Color, Vec | None] = { Color.White: None, Color.Black: None }
 
-        # 直前に2マス動いたPawnの位置
-        self.can_en_passant: dict[Color, Vec | None] = {
-            Color.White: None,
-            Color.Black: None,
-        }
+        for i, line in enumerate(fen_data[0].split("/")):
+            j = 0
+            for char in line:
+                if char.isdigit():
+                    j += int(char)
+                else:
+                    x = Piece(char)
+                    self.data[i][j] = x
+
+                    if x.kind == Kind.King:
+                        self.king_position[x.color] = Vec(i, j)
+                        
+                    j += 1
+
+        self.turn = Color.White if fen_data[1] == "w" else Color.Black
+
+        if fen_data[2] != "-":
+            for char in fen_data[2]:
+                self.can_castle_rooks.add(
+                    {
+                        "q": Vec(0, 0), 
+                        "k": Vec(0, 7), 
+                        "Q": Vec(7, 0), 
+                        "K": Vec(7, 7)
+                    }[char])
+
+        if fen_data[3] != "-":
+            pos = Vec.from_str(fen_data[3])
+            piece = self.get(pos)
+            assert piece, "[Error] 何もないマスが En passant 可能なマスとして指定された"
+            self.enpassant_target[piece.color] = pos
+
+        self.half_move = int(fen_data[4])
+        self.full_move = int(fen_data[5])
+
+        self.status: Status = Status.Playing
 
         # 利いているマスの集合
         self.covered: dict[Color, set[Vec]] = {
@@ -303,10 +306,9 @@ class Game:
             Color.Black: set(),
         }
 
-        self.status: Status = Status.Playing
-
         self.calc_covered_tiles()
 
+    # それぞれの色の駒が到達可能な(支配している)マスを列挙する
     def calc_covered_tiles(self):
         self.covered[Color.White].clear()
         self.covered[Color.Black].clear()
@@ -315,18 +317,18 @@ class Game:
             for j in range(8):
                 piece = self.get(Vec(i, j))
 
-                if piece:
-                    # この駒から到達可能なマスを追加
+                if (piece := self.get(Vec(i, j))):
                     for x in piece.reachable(self, Vec(i, j)):
                         self.covered[piece.color].add(x.to_)
 
+    # 次のターンに移る
     def update_turn(self, next_turn: Game):
         current_turn = self.turn
         current_enemy = self.turn.enemy()
 
         self.__dict__.update(next_turn.__dict__)
         self.turn = current_enemy
-        self.can_en_passant[current_enemy] = None
+        self.enpassant_target[current_enemy] = None
 
         enemy_checked = self.is_covered(self.king_position[current_enemy], current_turn)
 
@@ -336,6 +338,8 @@ class Game:
             else:
                 self.status = Status.Stalemate
 
+        print(self.to_fen())
+
     def get(self, x: Vec):
         return self.data[x.i][x.j]
 
@@ -344,30 +348,75 @@ class Game:
 
     def is_covered(self, pos: Vec, by: Color):
         return pos in self.covered[by]
+    
+    def to_fen(self):
+        fen: list[str] = ["" for _ in range(6)]
+
+        for i in range(8):
+            s = 0
+            for j in range(8):
+                x = self.get(Vec(i, j))
+
+                if x is None:
+                    s += 1
+                else:
+                    if s != 0:
+                        fen[0] += str(s)
+                        s = 0
+                    fen[0] += x.symbol
+            if s != 0:
+                fen[0] += str(s)
+            if i != 7:
+                fen[0] += "/"
+
+        fen[1] += "w" if self.turn == Color.White else "b"
+
+        for pos, symbol in ((Vec(7, 7), "K"), (Vec(7, 0), "Q"), (Vec(0, 7), "k"), (Vec(0, 0), "q")):
+            if pos in self.can_castle_rooks:
+                fen[2] += symbol
+
+        if fen[2] == " ":
+            fen[2] = "-"
+
+        if (pos := self.enpassant_target[self.turn.enemy()]):
+            fen[3] = str(pos)
+        else:
+            fen[3] = "-"
+
+        fen[4] = str(self.half_move)
+        fen[5] = str(self.full_move)
+
+        return " ".join(fen)
 
     # コピーした盤面で動きをシミュレートする
     # 動いた後にCheckされていなければその盤面を返す
     def test_move(self, move: Move):
-        parallel = copy.deepcopy(self)
-        parallel.set(move.to_, parallel.get(move.from_))
-        parallel.set(move.from_, None)
+        p = copy.deepcopy(self)
+        p.set(move.to_, p.get(move.from_))
+        p.set(move.from_, None)
 
-        move.action.do(parallel)
+        move.action.do(p)
 
-        moved_piece = parallel.get(move.to_)
+        moved_piece = p.get(move.to_)
         assert moved_piece is not None
 
-        moved_piece.moved = True
+        if moved_piece.kind == Kind.Rook:
+            p.can_castle_rooks.discard(move.to_)
 
         if moved_piece.kind == Kind.King:
-            parallel.king_position[parallel.turn] = move.to_
+            p.king_position[p.turn] = move.to_
 
-        parallel.calc_covered_tiles()
+            line = 7 if moved_piece.color == Color.White else 0
 
-        if parallel.is_covered(parallel.king_position[parallel.turn], parallel.turn.enemy()):
+            p.can_castle_rooks.discard(Vec(line, 0))
+            p.can_castle_rooks.discard(Vec(line, 7))
+
+        p.calc_covered_tiles()
+
+        if p.is_covered(p.king_position[p.turn], p.turn.enemy()):
             return None
 
-        return parallel
+        return p
 
     def get_all_legal_moves(self, color: Color):
         legal_moves: list[tuple[Move, Game]] = []
@@ -382,3 +431,6 @@ class Game:
                             legal_moves.append((move, next))
 
         return legal_moves
+
+# TODO
+# fenのhalf_move, full_move のカウントを実装する

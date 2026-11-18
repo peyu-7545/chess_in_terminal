@@ -4,7 +4,7 @@ import sys
 
 from engine import Game, Piece, Vec, Color, Kind, Status
 
-game = Game()
+game = Game("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
 
 # Ctrl+Cが押されたら入力中でも強制終了する
 signal.signal(signal.SIGINT, lambda _signum, _frame: exit(0))
@@ -31,7 +31,7 @@ ansi = ANSI_SGR()
 def printErr(err: str):
     print(ansi.red + ansi.bold + err + ansi.reset)
 
-def render(data: list[list[Piece | None]]):
+def render(data: list[list[Piece | None]], st: set[Vec] = set()):
     print(" abcdefgh")
 
     for i in range(8):
@@ -40,7 +40,10 @@ def render(data: list[list[Piece | None]]):
         for j in range(8):
             d = data[i][j]
 
-            print(ansi.bg_green if (i + j) % 2 == 0 else ansi.bg_white, end="")
+            if Vec(i, j) in st:
+                print(ansi.bg_blue, end="")
+            else:
+                print(ansi.bg_green if (i + j) % 2 == 0 else ansi.bg_white, end="")
             print(ansi.bold, end="")
 
             if d is None:
@@ -68,9 +71,6 @@ def humanTurn(game: Game):
     print(f"\n {ansi.bold}{game.turn.name}{ansi.reset}'s turn \n")
     render(game.data)
 
-    for x in game.get_all_legal_moves(game.turn):
-        print(x[0])
-
     while True:
 
         legal_moves = game.get_all_legal_moves(game.turn)
@@ -83,6 +83,9 @@ def humanTurn(game: Game):
         if (selected := game.get(from_)) is None or selected.color.is_enemy(game.turn):
             printErr("There is not your piece")
             continue
+
+        print("")
+        render(game.data, set(x[0].to_ for x in legal_moves if x[0].from_ == from_))
 
         if (to_ := ask_place("to: ")) is None:
             printErr("Wrong Input")
@@ -104,7 +107,7 @@ def humanTurn(game: Game):
             char = input(f"Promote to: ")
 
             if char not in opt:
-                printErr("You must select from" + ", ".join(opt))
+                printErr("You must select from " + ", ".join(opt))
                 continue
 
             legal_moves = [x for x in legal_moves if x[0].action.to_ == char] # type: ignore
@@ -116,11 +119,3 @@ def humanTurn(game: Game):
 
 while game.status == Status.Playing:
     humanTurn(game)
-
-# FEN
-# Piece Placement
-# Active Color (w or b)
-# Castling Rights (K, Q, k, q, or -)
-# Possible En Passant Targets
-# Halfmove Clock: Pawnの前進 / Capture からの両プレイヤーの手数 (100になると引き分け)
-# Fullmove Number: 黒が動かすたび1増加 (最初は1)
