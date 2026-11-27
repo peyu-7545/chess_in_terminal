@@ -2,9 +2,9 @@ from __future__ import annotations
 import signal
 import sys
 
-from engine import Game, Piece, Vec, Color, Kind, Status
+from engine import Engine, Piece, Vec, Color, Kind, Status
 
-game = Game("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+engine = Engine()
 
 # Ctrl+Cが押されたら入力中でも強制終了する
 signal.signal(signal.SIGINT, lambda _signum, _frame: exit(0))
@@ -66,26 +66,26 @@ def ask_place(msg: str):
 
     return None
 
-def humanTurn(game: Game):
+def humanTurn(engine: Engine):
 
-    print(f"\n {ansi.bold}{game.turn.name}{ansi.reset}'s turn \n")
-    render(game.data)
+    print(f"\n {ansi.bold}{engine.turn.name}{ansi.reset}'s turn \n")
+    render(engine.data)
 
     while True:
 
-        legal_moves = game.get_all_legal_moves(game.turn)
+        legal_moves = engine.get_all_legal_moves(engine.turn)
 
         if (from_ := ask_place("from: ")) is None:
             printErr("Wrong Input")
             continue
 
         # 入力された座標に駒がないか、相手の駒だったとき
-        if (selected := game.get(from_)) is None or selected.color.is_enemy(game.turn):
+        if (selected := engine.get(from_)) is None or selected.color.is_enemy(engine.turn):
             printErr("There is not your piece")
             continue
 
         print("")
-        render(game.data, set(x[0].to_ for x in legal_moves if x[0].from_ == from_))
+        render(engine.data, set(x[0].to_ for x in legal_moves if x[0].from_ == from_))
 
         if (to_ := ask_place("to: ")) is None:
             printErr("Wrong Input")
@@ -103,7 +103,7 @@ def humanTurn(game: Game):
             (selected.kind == Kind.Pawn) and 
             ((to_.i == 0) if (selected.color == Color.White) else (to_.i == 7))
         ):
-            opt = ("N", "B", "R", "Q") if game.turn == Color.White else ("n", "b", "r", "q")
+            opt = ("N", "B", "R", "Q") if engine.turn == Color.White else ("n", "b", "r", "q")
             char = input(f"Promote to: ")
 
             if char not in opt:
@@ -114,8 +114,8 @@ def humanTurn(game: Game):
 
         assert len(legal_moves) == 1, "[Bug] 合法手が一通りに定まっていない"
 
-        game.update_turn(legal_moves[0][1])
+        engine.update_turn(legal_moves[0][1])
         break
 
-while game.status == Status.Playing:
-    humanTurn(game)
+while engine.status == Status.Playing:
+    humanTurn(engine)

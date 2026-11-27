@@ -63,7 +63,7 @@ class Action:
     def __init__(self):
         pass
 
-    def do(self, game: Game):
+    def do(self, engine: Engine):
         pass
 
     def __str__(self) -> str:
@@ -74,9 +74,9 @@ class Promote(Action):
         self.pos = pos
         self.to_ = to_
 
-    def do(self, game: Game):
+    def do(self, engine: Engine):
         x = Piece(self.to_)
-        game.set(self.pos, x)
+        engine.set(self.pos, x)
 
     def __str__(self):
         return f"Promote to {self.to_}"
@@ -86,8 +86,8 @@ class SetEnpassantFlag(Action):
         self.pos   = pos
         self.color = color
 
-    def do(self, game: Game):
-        game.enpassant_target[self.color] = self.pos
+    def do(self, engine: Engine):
+        engine.enpassant_target[self.color] = self.pos
 
     def __str__(self):
         return "Set Enpassant Flag"
@@ -96,8 +96,8 @@ class Enpassant(Action):
     def __init__(self, pos: Vec):
         self.pos = pos
 
-    def do(self, game: Game):
-        game.set(self.pos, None)
+    def do(self, engine: Engine):
+        engine.set(self.pos, None)
 
     def __str__(self):
         return "Enpassant"
@@ -107,9 +107,9 @@ class Castling(Action):
         self.rook_from = rook_from
         self.rook_to   = rook_to
 
-    def do(self, game: Game):
-        game.set(self.rook_to, game.get(self.rook_from))
-        game.set(self.rook_from, None)
+    def do(self, engine: Engine):
+        engine.set(self.rook_to, engine.get(self.rook_from))
+        engine.set(self.rook_from, None)
 
     def __str__(self):
         return "Castling"
@@ -149,7 +149,7 @@ class Piece:
     def is_enemy(self, other: Piece):
         return self.color.is_enemy(other.color)
 
-    def reachable(self, game: Game, from_: Vec):
+    def reachable(self, engine: Engine, from_: Vec):
         result: set[Move] = set()
 
         if self.kind == Kind.Pawn:
@@ -162,7 +162,7 @@ class Piece:
 
             m1 = from_ + Vec(forward, 0)
 
-            if m1.is_in() and game.get(m1) is None:
+            if m1.is_in() and engine.get(m1) is None:
                 if m1.i == promote_line:
                     for k in promote_opt:
                         result.add(Move(from_, m1, Promote(m1, k)))
@@ -172,16 +172,16 @@ class Piece:
                 if from_.i == begin_line:
                     m2 = from_ + Vec(2 * forward, 0)
 
-                    if m2.is_in() and game.get(m2) is None:
+                    if m2.is_in() and engine.get(m2) is None:
                         # 2マス進むのと昇格は同時に起こらない
-                        result.add(Move(from_, m2, SetEnpassantFlag(m2, self.color)))
+                        result.add(Move(from_, m2, SetEnpassantFlag(m1, self.color)))
 
             for dj in -1, 1:
                 pass_ = from_ + Vec(0,       dj)
                 to_   = from_ + Vec(forward, dj)
 
                 if to_.is_in():
-                    if (target := game.get(to_)) and target.is_enemy(self):
+                    if (target := engine.get(to_)) and target.is_enemy(self):
                         # 斜め前に敵がいるなら取れる
                         if to_.i == promote_line:
                             for k in promote_opt:
@@ -189,7 +189,7 @@ class Piece:
                         else:
                             result.add(Move(from_, to_))
 
-                    if (target := game.get(pass_)) and target.is_enemy(self) and pass_ == game.enpassant_target[target.color]:
+                    if (target := engine.get(pass_)) and target.is_enemy(self) and to_ == engine.enpassant_target[target.color]:
                         # 横にEn passant可能な駒がいるなら斜め前に移動しながら取れる
                         result.add(Move(from_, to_, Enpassant(pass_)))
 
@@ -200,7 +200,7 @@ class Piece:
                 to_ = from_ + Vec(*d)
 
                 if to_.is_in():
-                    target = game.get(to_)
+                    target = engine.get(to_)
 
                     if target is None or target.is_enemy(self):
                         result.add(Move(from_, to_))
@@ -220,7 +220,7 @@ class Piece:
                     to_ = from_ + scale * Vec(*d)
 
                     if to_.is_in():
-                        target = game.get(to_)
+                        target = engine.get(to_)
 
                         if target is None or target.is_enemy(self):
                             result.add(Move(from_, to_))
@@ -236,33 +236,31 @@ class Piece:
                 to_ = from_ + Vec(*d)
 
                 if to_.is_in():
-                    target = game.get(to_)
+                    target = engine.get(to_)
 
                     if target is None or target.is_enemy(self):
                         result.add(Move(from_, to_))
 
             for rook_pos, dj in ((Vec(from_.i, 0), -1), (Vec(from_.i, 7), 1)):
-                if rook_pos in game.can_castle_rooks:
+                if rook_pos in engine.can_castle_rooks:
                     to_ = from_ + Vec(0, dj * 2)
 
                     if (
-                        all(game.get(Vec(from_.i, j)) is None for j in range(from_.j + dj, rook_pos.j, dj)) and # あいだに駒がない
-                        all(not game.is_covered(Vec(from_.i, j), self.color.enemy()) for j in range(from_.j, from_.j + dj * 3, dj)) # kingの移動中に攻撃されない
+                        all(engine.get(Vec(from_.i, j)) is None for j in range(from_.j + dj, rook_pos.j, dj)) and # あいだに駒がない
+                        all(not engine.is_covered(Vec(from_.i, j), self.color.enemy()) for j in range(from_.j, from_.j + dj * 3, dj)) # kingの移動中に攻撃されない
                     ):
                         # Castlingできる
                         result.add(Move(from_, to_, Castling(rook_pos, from_ + Vec(0, dj))))
 
         return result
 
-class Game:
-    def __init__(self, fen: str):
+class Engine:
+    def __init__(self, fen: str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"):
 
         fen_data = fen.split(" ")
 
         self.data: list[list[Piece | None]] = [[None] * 8 for _ in range(8)]
         self.king_position: dict[Color, Vec] = dict()
-        self.can_castle_rooks: set[Vec] = set()
-        self.enpassant_target: dict[Color, Vec | None] = { Color.White: None, Color.Black: None }
 
         for i, line in enumerate(fen_data[0].split("/")):
             j = 0
@@ -280,6 +278,8 @@ class Game:
 
         self.turn = Color.White if fen_data[1] == "w" else Color.Black
 
+        self.can_castle_rooks: set[Vec] = set()
+
         if fen_data[2] != "-":
             for char in fen_data[2]:
                 self.can_castle_rooks.add(
@@ -290,11 +290,11 @@ class Game:
                         "K": Vec(7, 7)
                     }[char])
 
+        self.enpassant_target: dict[Color, Vec | None] = { Color.White: None, Color.Black: None }
+
         if fen_data[3] != "-":
             pos = Vec.from_str(fen_data[3])
-            piece = self.get(pos)
-            assert piece, "[Error] 何もないマスが En passant 可能なマスとして指定された"
-            self.enpassant_target[piece.color] = pos
+            self.enpassant_target[Color.White if pos.i == 5 else Color.Black] = pos
 
         self.half_move = int(fen_data[4])
         self.full_move = int(fen_data[5])
@@ -323,7 +323,7 @@ class Game:
                         self.covered[piece.color].add(x.to_)
 
     # 次のターンに移る
-    def update_turn(self, next_turn: Game):
+    def update_turn(self, next_turn: Engine):
         current_turn = self.turn
         current_enemy = self.turn.enemy()
 
@@ -338,8 +338,6 @@ class Game:
                 self.status = Status.Checkmate
             else:
                 self.status = Status.Stalemate
-
-        print(self.to_fen())
 
     def get(self, x: Vec):
         return self.data[x.i][x.j]
@@ -429,7 +427,7 @@ class Game:
         return p
 
     def get_all_legal_moves(self, color: Color):
-        legal_moves: list[tuple[Move, Game]] = []
+        legal_moves: list[tuple[Move, Engine]] = []
 
         for i in range(8):
             for j in range(8):
@@ -441,6 +439,3 @@ class Game:
                             legal_moves.append((move, next))
 
         return legal_moves
-
-# TODO
-# fenのhalf_move, full_move のカウントを実装する
