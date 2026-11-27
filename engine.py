@@ -1,3 +1,4 @@
+from __future__ import annotations
 from enum import Enum
 from typing import Any
 import copy
@@ -390,8 +391,9 @@ class Game:
 
     # コピーした盤面で動きをシミュレートする
     # 動いた後にCheckされていなければその盤面を返す
-    def test_move(self, move: Move):
+    def simulate_move(self, move: Move):
         p = copy.deepcopy(self)
+        captured = p.get(move.to_) is not None
         p.set(move.to_, p.get(move.from_))
         p.set(move.from_, None)
 
@@ -411,6 +413,14 @@ class Game:
             p.can_castle_rooks.discard(Vec(line, 0))
             p.can_castle_rooks.discard(Vec(line, 7))
 
+        if moved_piece.kind == Kind.Pawn or captured:
+            p.half_move = 0
+        else:
+            p.half_move += 1
+
+        if self.turn == Color.Black:
+            p.full_move += 1
+
         p.calc_covered_tiles()
 
         if p.is_covered(p.king_position[p.turn], p.turn.enemy()):
@@ -427,7 +437,7 @@ class Game:
 
                 if piece and piece.color == color:
                     for move in piece.reachable(self, Vec(i, j)):
-                        if (next := self.test_move(move)):
+                        if (next := self.simulate_move(move)):
                             legal_moves.append((move, next))
 
         return legal_moves
